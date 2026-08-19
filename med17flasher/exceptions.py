@@ -111,6 +111,41 @@ class FlashAborted(FlashError):
 
 
 # --------------------------------------------------------------------------- #
+# XCP (measurement / calibration)
+# --------------------------------------------------------------------------- #
+class XcpError(Med17FlasherError):
+    """Base class for XCP (ASAM MCD-1) level problems."""
+
+
+class XcpTimeoutError(XcpError):
+    """The XCP slave did not answer a command in time."""
+
+
+class XcpNegativeResponseError(XcpError):
+    """The XCP slave returned an ERR packet (0xFE ...).
+
+    Parameters
+    ----------
+    command:
+        The command code that triggered the error.
+    code:
+        The XCP error code byte.
+    """
+
+    def __init__(self, command: int, code: int, message: Optional[str] = None):
+        from .xcp.const import COMMAND_NAMES, ERROR_NAMES
+
+        self.command = command
+        self.code = code
+        self.error_name = ERROR_NAMES.get(code, f"0x{code:02X}")
+        self.command_name = COMMAND_NAMES.get(command, f"0x{command:02X}")
+        super().__init__(
+            message
+            or f"XCP {self.command_name} rejected: {self.error_name} (0x{code:02X})"
+        )
+
+
+# --------------------------------------------------------------------------- #
 # Repository / file server
 # --------------------------------------------------------------------------- #
 class RepositoryError(Med17FlasherError):

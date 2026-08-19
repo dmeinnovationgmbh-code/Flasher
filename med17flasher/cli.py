@@ -479,6 +479,116 @@ def cmd_scan(args) -> int:
         bus.close()
 
 
+def cmd_measure(args) -> int:
+    """XCP measurement / logging (poll or DAQ) of live ECU values."""
+
+    import math
+    import time as _t
+
+    from .core import VirtualCanNetwork
+    from .xcp import (
+        DaqMeasurement,
+        PollingMeasurement,
+        XcpClient,
+        XcpOnCan,
+        VirtualXcpSlave,
+        configure_daq,
+        parse_signal,
+    )
+
+    specs = list(args.signal or [])
+    if args.signals_file:
+        with open(args.signals_file, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    specs.append(line)
+
+    sim = None
+    if args.simulator:
+        net = VirtualCanNetwork()
+        slave = VirtualXcpSlave(net.new_endpoint("ecu"), args.cro, args.dto,
+                                byte_order=args.byte_order, daq_period=0.02)
+        t0 = _t.monotonic()
+
+        def provider(addr, size):
+            if addr == 0x2000:  # a wandering engine speed
+                rpm = int(3200 + 2600 * math.sin((_t.monotonic() - t0) * 1.3))
+                return max(0, rpm).to_bytes(2, args.byte_order)
+            return None
+
+        slave.provider = provider
+        slave.set_bytes(0x2002, (900).to_bytes(2, args.byte_order))    # coolant raw
+        slave.set_bytes(0x2004, (13800).to_bytes(2, args.byte_order))  # battery mV
+        slave.start()
+        bus = net.new_endpoint("tester")
+        sim = slave
+        if not specs:
+            specs = ["rpm@0x2000:u16", "coolant@0x2002:s16:0.1:-40:degC",
+                     "battery@0x2004:u16:0.001:0:V"]
+    else:
+        bus = create_bus(args.backend)
+
+    if not specs:
+        print("no signals given; use --signal name@addr:type (repeatable) or "
+              "--signals-file FILE", file=sys.stderr)
+        return 2
+
+    try:
+        signals = [parse_signal(s) for s in specs]
+    except ValueError as exc:
+        print(f"bad signal spec: {exc}", file=sys.stderr)
+        return 2
+
+    tp = XcpOnCan(bus, args.cro, args.dto, is_extended_id=args.extended,
+                  timeout=args.timeout, pad_to=(8 if args.pad else None))
+    client = XcpClient(tp)
+    names = [s.name for s in signals]
+    units = {s.name: s.unit for s in signals}
+
+    def on_sample(sample) -> None:
+        cells = "  ".join(f"{n}={sample.values[n]:.2f}{units[n]}" for n in names)
+        sys.stdout.write("\r  t=%7.2fs  %s        " % (sample.t, cells))
+        sys.stdout.flush()
+
+    try:
+        info = client.connect()
+        where = "simulator" if args.simulator else args.backend
+        print(f"XCP connected on {where} "
+              f"(MAX_CTO={info['maxCto']}, byte order {info['byteOrder']}, "
+              f"{len(signals)} signal(s), {'DAQ' if args.daq else 'polling'})")
+        if args.daq:
+            layout = configure_daq(client, signals, event=args.event,
+                                   prescaler=args.prescaler)
+            meas = DaqMeasurement(client, layout)
+            rows = meas.run(duration=args.duration, max_samples=args.samples,
+                            callback=on_sample, csv_path=args.csv)
+        else:
+            meas = PollingMeasurement(client, signals)
+            rows = meas.run(rate_hz=args.rate, duration=args.duration,
+                            max_samples=args.samples, callback=on_sample,
+                            csv_path=args.csv)
+        sys.stdout.write("\n")
+        print(f"captured {len(rows)} sample(s)"
+              + (f" -> {args.csv}" if args.csv else ""))
+        return 0
+    except KeyboardInterrupt:
+        sys.stdout.write("\nstopped.\n")
+        return 0
+    except Med17FlasherError as exc:
+        print(f"\nmeasure failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        try:
+            if client.connected:
+                client.disconnect()
+        except Exception:  # noqa: BLE001
+            pass
+        if sim:
+            sim.stop()
+        bus.close()
+
+
 def cmd_capture(args) -> int:
     import threading as _threading
 
@@ -1030,6 +1140,36 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--emit-profile", help="write a profile skeleton from the scan")
     p.add_argument("--emit-seeds", help="write the collected seeds to a file")
     p.set_defaults(func=cmd_scan)
+
+    # xcp / measure
+    p = sub.add_parser("xcp", aliases=["measure"],
+                       help="measure/log live ECU values over XCP (poll or DAQ)")
+    add_bus_args(p)
+    p.add_argument("--signal", action="append", metavar="NAME@ADDR:TYPE",
+                   help="a signal to measure, e.g. rpm@0x80005000:u16:0.25 "
+                        "(TYPE u8/s8/u16/s16/u32/s32/f32/f64; optional :factor:offset:unit). "
+                        "Repeatable.")
+    p.add_argument("--signals-file", help="file with one signal spec per line (# comments)")
+    p.add_argument("--cro", type=lambda x: int(x, 0), default=0x7E0,
+                   help="XCP command (CRO) CAN id (default 0x7E0)")
+    p.add_argument("--dto", type=lambda x: int(x, 0), default=0x7E1,
+                   help="XCP response/data (DTO) CAN id (default 0x7E1)")
+    p.add_argument("--extended", action="store_true", help="use 29-bit CAN ids")
+    p.add_argument("--byte-order", choices=["little", "big"], default="little",
+                   help="slave byte order for the simulator (default little)")
+    p.add_argument("--daq", action="store_true",
+                   help="use real XCP DAQ streaming instead of polling")
+    p.add_argument("--rate", type=float, default=10.0,
+                   help="polling rate in Hz (default 10)")
+    p.add_argument("--event", type=int, default=0, help="DAQ event channel (--daq)")
+    p.add_argument("--prescaler", type=int, default=1, help="DAQ prescaler (--daq)")
+    p.add_argument("--duration", type=float, default=None,
+                   help="stop after N seconds (default: until Ctrl+C)")
+    p.add_argument("--samples", type=int, default=None, help="stop after N samples")
+    p.add_argument("--csv", help="log samples to this CSV file")
+    p.add_argument("--pad", action="store_true", help="pad CTO frames to 8 bytes")
+    p.add_argument("--timeout", type=float, default=1.0, help="response timeout (s)")
+    p.set_defaults(func=cmd_measure)
 
     # capture
     p = sub.add_parser("capture", help="passively record CAN frames to a candump log")

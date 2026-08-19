@@ -108,6 +108,7 @@ med17flasher seedkey        compute a key from a seed
 med17flasher seedkey-solve  recover a seed/key algorithm from captured pairs
 med17flasher seedkey-server run the seed/key network server (HTTP + TCP)
 med17flasher scan           read-only ECU reconnaissance (sessions/DIDs/seeds)
+med17flasher xcp            measure/log live ECU values over XCP (poll or DAQ)
 med17flasher capture        passively record CAN frames to a candump log
 med17flasher analyze-trace  derive a profile + seed/key pairs from a CAN trace
 med17flasher analyze-firmware detect program regions in a firmware dump
