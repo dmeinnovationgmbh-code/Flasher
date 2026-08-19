@@ -144,3 +144,25 @@ def test_shell_installer_is_executable_and_sane(script):
         body = fh.read()
     assert body.startswith("#!"), "missing shebang"
     assert "set -eu" in body, "must fail fast"
+
+
+def test_frozen_app_exposes_the_cli_subcommands():
+    """The shipped executable must be usable without a Python install.
+
+    A workshop that only has the .exe still needs the write-free pre-flight
+    checks (`j2534`, `scan`) and `analyze-trace` - exactly the commands you run
+    *before* touching a car. Without this passthrough the binary could only
+    open the window.
+    """
+
+    from med17flasher.desktop import _run
+
+    assert _run(["backends"]) == 0          # a real subcommand runs
+    assert _run(["--selftest"]) in (0, 1)   # the selftest flag still wins
+
+
+def test_frozen_app_cli_reports_failures_as_exit_codes():
+    from med17flasher.desktop import _run
+
+    # No PassThru device here, so this must fail cleanly rather than raise.
+    assert _run(["j2534"]) == 1

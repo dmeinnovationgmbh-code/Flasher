@@ -129,6 +129,16 @@ def _run(argv=None) -> int:
     if "--selftest" in argv:
         return _selftest()
 
+    # A bare launch opens the window; anything that looks like a subcommand is
+    # handed to the CLI. Without this the shipped executable could only ever
+    # show the UI - a workshop with no Python installed had no way to run the
+    # pre-flight checks (`j2534`, `scan`) or `analyze-trace`, which is exactly
+    # when you need them: before touching a car.
+    if argv and not argv[0].startswith("-"):
+        from .cli import main as cli_main
+
+        return cli_main(argv)
+
     from .webserver import FlashService, WebServer
 
     server = WebServer(FlashService(), host="127.0.0.1", port=0)
