@@ -3,6 +3,7 @@ name: Build desktop app
 on:
   push:
     tags: ["v*"]
+    branches: ["claude/**"]   # also build downloadable artifacts on the dev branch
   workflow_dispatch: {}
 
 jobs:
