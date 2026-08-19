@@ -66,8 +66,69 @@ def _open_browser_and_wait(url: str, server) -> int:
     return 0
 
 
+def _selftest() -> int:
+    """Exercise the real startup path headlessly and exit 0/1.
+
+    This is what CI runs against the *frozen* binary. It caught nothing before
+    because CI only built the exe and never launched it — which is exactly how
+    the "bundled YAML profile but no PyYAML" startup crash shipped green. Here we
+    actually construct the service, bind the server, and fetch the bundled UI +
+    a couple of API endpoints through HTTP, so a broken build fails the job.
+    """
+
+    # Must never raise: on a windowed Windows build a raised exception would
+    # reach main() and pop a blocking MessageBox, hanging CI. Catch everything
+    # here and return a status code instead.
+    import json
+    import urllib.request
+
+    server = None
+    try:
+        from .webserver import FlashService, WebServer
+
+        server = WebServer(FlashService(), host="127.0.0.1", port=0)
+        server.start(block=False)
+        base = server.url
+
+        def get(path: str) -> bytes:
+            with urllib.request.urlopen(base + path, timeout=10) as r:
+                if r.status != 200:
+                    raise RuntimeError(f"{path} -> HTTP {r.status}")
+                return r.read()
+
+        vehicle = json.loads(get("/api/vehicle"))
+        assert vehicle.get("ecu"), "vehicle payload missing ecu"
+        profiles = json.loads(get("/api/profiles")).get("profiles", [])
+        assert profiles, "no ECU profiles were bundled/loadable"
+        index = get("/")  # the bundled React UI
+        assert b'<div id="root"' in index or b"<title" in index, "web UI not served"
+
+        root = server._httpd.static_root  # type: ignore[attr-defined]
+        # A frozen desktop app must ship the built UI, not the dev fallback page.
+        if root is None:
+            sys.stderr.write("selftest FAILED: the web UI (webui/dist) is not bundled\n")
+            return 1
+        sys.stdout.write(
+            f"selftest OK: UI bundled, {len(profiles)} profile(s), ecu={vehicle['ecu']}\n"
+        )
+        return 0
+    except BaseException as exc:  # noqa: BLE001 - report and fail, never propagate
+        sys.stderr.write(f"selftest FAILED: {type(exc).__name__}: {exc}\n")
+        return 1
+    finally:
+        if server is not None:
+            try:
+                server.stop()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def _run(argv=None) -> int:
     configure_logging(logging.INFO, logfile=_log_path())
+    argv = sys.argv[1:] if argv is None else argv
+    if "--selftest" in argv:
+        return _selftest()
+
     from .webserver import FlashService, WebServer
 
     server = WebServer(FlashService(), host="127.0.0.1", port=0)

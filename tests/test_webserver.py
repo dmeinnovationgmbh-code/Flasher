@@ -122,6 +122,38 @@ def test_builtin_profile_is_self_contained():
     assert [r.name for r in prof.memory_map] == ["CBOOT", "ASW", "CAL"]
 
 
+def test_desktop_selftest_passes_on_a_good_build():
+    import med17flasher.desktop as desktop
+
+    # The real startup path (server + bundled UI + API) must return 0.
+    assert desktop._selftest() == 0
+
+
+def test_desktop_selftest_fails_when_ui_missing(monkeypatch):
+    import med17flasher.desktop as desktop
+    import med17flasher.webserver.app as appmod
+
+    # Simulate a broken build where webui/dist was not bundled: the selftest
+    # must FAIL (return 1) instead of shipping a green CI.
+    monkeypatch.setattr(appmod, "_static_root", lambda: None)
+    assert desktop._selftest() == 1
+
+
+def test_desktop_selftest_never_raises(monkeypatch):
+    """A windowed Windows build must never let the selftest raise (it would pop
+    a blocking MessageBox and hang CI). It returns 1 instead."""
+
+    import med17flasher.desktop as desktop
+
+    monkeypatch.setattr(desktop, "WebServer", None, raising=False)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr("med17flasher.webserver.WebServer", boom)
+    assert desktop._selftest() == 1
+
+
 def test_desktop_main_keeps_console_on_startup_error(monkeypatch):
     """A startup crash must be reported and return 1, never propagate (which
     would just close the console window)."""
