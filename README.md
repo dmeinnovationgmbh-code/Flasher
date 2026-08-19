@@ -23,7 +23,7 @@ any hardware.
 | **ISO-TP** | Full ISO 15765-2: SF/FF/CF/FC, block size & STmin, padding, 32-bit escape frames, extended addressing |
 | **UDS client** | Sessions, ECU reset, Security Access, Routine Control, Request/Transfer Download, Read/Write DID & memory, TesterPresent keep-alive, `responsePending` (0x78) handling |
 | **Flash sequence** | Session → preconditions → programming session → seed/key → per-block erase/download/transfer/verify → dependencies → reset, with progress + abort |
-| **Seed/Key** | Pluggable algorithm framework + reference algorithms + a JSON catalogue + a **solver** that recovers the algorithm from captured seed→key pairs + an HTTP/TCP **seed/key server** |
+| **Seed/Key** | Pluggable algorithm framework + reference algorithms + a **J2534 seed-key DLL** / seed-key EXE backend + a JSON catalogue + a **solver** that recovers the algorithm from captured seed→key pairs + an HTTP/TCP **seed/key server** (with a production-style `GET /key/:level/:seed` route) |
 | **File server** | Dependency-free HTTP REST firmware repository (upload/list/download/delete + metadata + bearer auth) with a client |
 | **Simulator** | A virtual MED17.7.5 that answers real UDS, including a genuine seed/key challenge and CRC-checked programming |
 | **Front-ends** | A **React (Vite) web UI** (the DME "MED17 Flash Tool" design, wired to the real flash engine via a JSON/SSE API), a Tkinter desktop GUI, and a full-featured CLI |
@@ -164,7 +164,10 @@ tests/         pytest suite (unit + end-to-end against the simulator)
 docs/          ARCHITECTURE, FLASH_SEQUENCE, SEEDKEY, SAFETY
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the layers fit together.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the layers fit
+together, and [`docs/MED1775.md`](docs/MED1775.md) for a real MED17.7.5
+calibration-flash flow (security level 0x05/0x06, whole-flash erase, fingerprint
+writes, gateway unlock) driven by a vendor **seed/key DLL**.
 
 ## Testing
 

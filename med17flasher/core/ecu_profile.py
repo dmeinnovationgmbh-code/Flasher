@@ -83,9 +83,35 @@ class RoutineConfig:
     check_programming_dependencies: int = int(C.Routine.CHECK_PROGRAMMING_DEPENDENCIES)
     check_memory: int = int(C.Routine.CHECK_MEMORY)
     #: How the erase routine addresses a region:
-    #: "address_size" -> pass 4-byte address + 4-byte size
+    #: "address_size" -> pass 4-byte address + 4-byte size (ALFID-prefixed)
     #: "block_id"     -> pass a 1-byte logical block id (index into memory_map)
+    #: "none"         -> RoutineControl start erase with no argument (whole flash)
     erase_argument: str = "address_size"
+
+
+@dataclass
+class FingerprintWrite:
+    """A WriteDataByIdentifier fingerprint write done during flashing."""
+
+    did: int
+    value: str  # hex string
+    #: "after_security" (before erase) or "after_download" (after RequestDownload)
+    when: str = "after_security"
+
+
+@dataclass
+class GatewayConfig:
+    """A gateway / diagnostic-firewall Security Access done before flashing.
+
+    Mercedes routes diagnostics through a gateway (e.g. EZS) that must itself be
+    unlocked before the target ECU can be reprogrammed.
+    """
+
+    tx_id: int
+    rx_id: int
+    security_level: int
+    algorithm: str = "med17"
+    params: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -104,6 +130,21 @@ class EcuProfile:
     #: Whether to send a compression/encryption "flash driver" before erase
     #: (many MED17 flows upload a small RAM routine first; left off by default).
     upload_flash_driver: bool = False
+
+    # -- optional real-world flow tweaks (all default to the generic behaviour) --
+    #: Hard-reset the ECU and wait ``settle_delay`` s before starting.
+    pre_hard_reset: bool = False
+    settle_delay: float = 0.0
+    #: Run a checkMemory routine after each block (set False when checksum:false).
+    verify_after_write: bool = True
+    #: Clear DTCs (service 0x14, group 0xFFFFFF) after the reset.
+    clear_dtc_after: bool = False
+    #: Session to leave the ECU in at the end (None = default session).
+    final_session: Optional[int] = None
+    #: Fingerprint writes performed during flashing.
+    fingerprints: List[FingerprintWrite] = field(default_factory=list)
+    #: Optional gateway / diagnostic-firewall unlock before flashing.
+    gateway: Optional[GatewayConfig] = None
 
     # ------------------------------------------------------------------ #
     # (de)serialisation
@@ -156,6 +197,20 @@ class EcuProfile:
                 )
             )
 
+        fingerprints = [
+            FingerprintWrite(did=_int(f["did"]), value=str(f["value"]),
+                             when=f.get("when", "after_security"))
+            for f in data.get("fingerprints", [])
+        ]
+        gateway = None
+        if data.get("gateway"):
+            g = data["gateway"]
+            gateway = GatewayConfig(
+                tx_id=_int(g["tx_id"]), rx_id=_int(g["rx_id"]),
+                security_level=_int(g["security_level"]),
+                algorithm=g.get("algorithm", "med17"), params=g.get("params", {}),
+            )
+
         profile = cls(
             name=data.get("name", "MED17.7.5"),
             description=data.get("description", ""),
@@ -167,6 +222,13 @@ class EcuProfile:
             transfer_data_format=_int(data.get("transfer_data_format", 0x00)),
             programming_session=_int(data.get("programming_session", C.Session.PROGRAMMING)),
             upload_flash_driver=bool(data.get("upload_flash_driver", False)),
+            pre_hard_reset=bool(data.get("pre_hard_reset", False)),
+            settle_delay=float(data.get("settle_delay", 0.0)),
+            verify_after_write=bool(data.get("verify_after_write", True)),
+            clear_dtc_after=bool(data.get("clear_dtc_after", False)),
+            final_session=(_int(data["final_session"]) if data.get("final_session") is not None else None),
+            fingerprints=fingerprints,
+            gateway=gateway,
         )
         return profile
 

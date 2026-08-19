@@ -31,6 +31,7 @@ from . import checksum as _cs
 from . import uds_const as C
 from .ecu_profile import EcuProfile, MemoryRegion, default_profile
 from .firmware import FirmwareImage, FlashBlock
+from .isotp import IsoTpConfig, IsoTpLayer
 from .uds import UdsClient
 
 log = get_logger("core.flash")
@@ -159,25 +160,32 @@ class Flasher:
 
         self.uds.start_tester_present(self.profile.timing.tester_present_period)
         try:
+            self._pre_reset()
+            self._gateway_unlock()
             self._connect()
             self._preconditions()
             self._enter_programming_session()
             self._security_access()
+            self._write_fingerprints("after_security")
 
             for index, block in enumerate(blocks, 1):
                 self._check_abort()
                 block = self._patch_checksum(block)
                 self._erase_block(block, index, len(blocks))
                 max_block_len = self._request_download(block, index, len(blocks))
+                if index == 1:
+                    self._write_fingerprints("after_download")
                 overall_done = self._transfer_block(
                     block, index, len(blocks), max_block_len, overall_done, overall_total
                 )
                 self._request_transfer_exit(block)
-                self._verify_block(block, index, len(blocks))
+                if self.profile.verify_after_write:
+                    self._verify_block(block, index, len(blocks))
                 done_names.append(block.name)
 
             self._check_dependencies()
             self._reset()
+            self._post_reset()
         except FlashAborted:
             self._report(FlashProgress(Stage.FAILED, message="aborted"))
             self._safe_return_to_default()
@@ -209,9 +217,72 @@ class Flasher:
     # ------------------------------------------------------------------ #
     # Steps
     # ------------------------------------------------------------------ #
+    def _pre_reset(self) -> None:
+        if not self.profile.pre_hard_reset:
+            return
+        self._report(FlashProgress(Stage.CONNECT, message="pre-flash hard reset"))
+        try:
+            self.uds.ecu_reset(C.ResetType.HARD_RESET)
+        except Med17FlasherError as exc:
+            log.debug("pre-flash reset returned: %s", exc)
+        if self.profile.settle_delay:
+            self._report(FlashProgress(Stage.CONNECT,
+                                       message=f"waiting {self.profile.settle_delay:.0f}s for ECU"))
+            time.sleep(self.profile.settle_delay)
+
+    def _gateway_unlock(self) -> None:
+        gw = self.profile.gateway
+        if gw is None:
+            return
+        self._check_abort()
+        self._report(FlashProgress(Stage.SECURITY_ACCESS,
+                                   message=f"gateway unlock (id 0x{gw.tx_id:03X}, level 0x{gw.security_level:02X})"))
+        gw_tp = IsoTpLayer(self.uds.tp.bus, IsoTpConfig(
+            tx_id=gw.tx_id, rx_id=gw.rx_id,
+            is_extended_id=self.profile.can.is_extended_id,
+            padding_byte=self.profile.can.padding_byte))
+        gw_uds = UdsClient(gw_tp)
+        try:
+            gw_uds.enter_extended_session()
+        except Med17FlasherError:
+            pass
+        seed = gw_uds.request_seed(gw.security_level)
+        if any(seed):
+            from ..seedkey import compute_key
+
+            key = compute_key(gw.algorithm, seed, level=gw.security_level, params=gw.params)
+            gw_uds.send_key(gw.security_level + 1, key)
+        self._report(FlashProgress(Stage.SECURITY_ACCESS, message="gateway unlocked"))
+
+    def _write_fingerprints(self, when: str) -> None:
+        for fp in self.profile.fingerprints:
+            if fp.when != when:
+                continue
+            self._check_abort()
+            self._report(FlashProgress(Stage.SECURITY_ACCESS,
+                                       message=f"fingerprint 0x{fp.did:04X}={fp.value}"))
+            self.uds.write_data_by_identifier(fp.did, bytes.fromhex(fp.value))
+
+    def _post_reset(self) -> None:
+        if self.profile.clear_dtc_after:
+            try:
+                self.uds.request(bytes([C.Service.CLEAR_DIAGNOSTIC_INFORMATION, 0xFF, 0xFF, 0xFF]))
+                self._report(FlashProgress(Stage.DONE, message="cleared DTCs"))
+            except Med17FlasherError as exc:
+                log.debug("clear DTC returned: %s", exc)
+        if self.profile.final_session is not None:
+            try:
+                self.uds.diagnostic_session_control(self.profile.final_session)
+            except Med17FlasherError as exc:
+                log.debug("final session change returned: %s", exc)
+
     def _connect(self) -> None:
         self._report(FlashProgress(Stage.CONNECT, message="entering extended session"))
-        self.uds.enter_extended_session()
+        try:
+            self.uds.enter_extended_session()
+        except Med17FlasherError as exc:
+            # Some flows go straight to the programming session.
+            log.debug("extended session skipped: %s", exc)
 
     def _preconditions(self) -> None:
         self._report(
@@ -307,6 +378,8 @@ class Flasher:
 
     def _erase_argument(self, block: FlashBlock, index: int) -> bytes:
         mode = self.profile.routines.erase_argument
+        if mode == "none":
+            return b""  # RoutineControl start erase with no argument (whole flash)
         if mode == "block_id":
             return bytes([index - 1])
         # default: 4-byte address + 4-byte size, prefixed with an ALFID byte

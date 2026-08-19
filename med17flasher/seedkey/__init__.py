@@ -15,6 +15,19 @@ from .base import (
     register,
     register_function,
 )
+from .dll import DllSeedKey, ExeSeedKey, make_backend
+
+
+class AlgorithmResolver:
+    """Adapt a :class:`SeedKeyAlgorithm` to the flasher's seed/key resolver
+    interface (``compute(ecu, level, seed)``)."""
+
+    def __init__(self, algorithm: SeedKeyAlgorithm, params=None) -> None:
+        self.algorithm = algorithm
+        self.params = params or {}
+
+    def compute(self, ecu: str, level: int, seed: bytes) -> bytes:
+        return self.algorithm.compute(seed, level=level, params=self.params)
 from .solver import (
     SeedKeyPair,
     SeedKeySolver,
@@ -40,4 +53,8 @@ __all__ = [
     "SolveResult",
     "load_pairs",
     "load_wordlist",
+    "DllSeedKey",
+    "ExeSeedKey",
+    "make_backend",
+    "AlgorithmResolver",
 ]

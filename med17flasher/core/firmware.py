@@ -342,6 +342,32 @@ def detect_regions(
     return regions
 
 
+def validate_calibration(
+    data: bytes,
+    *,
+    length: Optional[int] = None,
+    start_byte: int = 0x60,
+    end_byte: int = 0xDE,
+) -> None:
+    """Validate a calibration image against the med1775 signature markers.
+
+    A valid calibration starts with ``start_byte`` (0x60) and ends with
+    ``end_byte`` (0xDE), and - if ``length`` is given - must be exactly that
+    long. Raises :class:`~med17flasher.exceptions.FirmwareError` otherwise.
+    """
+
+    if length is not None and len(data) != length:
+        raise FirmwareError(
+            f"calibration length 0x{len(data):X} != expected 0x{length:X}"
+        )
+    if not data:
+        raise FirmwareError("empty calibration image")
+    if data[0] != start_byte:
+        raise FirmwareError(f"calibration must start with 0x{start_byte:02X}, got 0x{data[0]:02X}")
+    if data[-1] != end_byte:
+        raise FirmwareError(f"calibration must end with 0x{end_byte:02X}, got 0x{data[-1]:02X}")
+
+
 def save_binary(image: FirmwareImage, path: str, fill: int = 0xFF) -> None:
     """Write the image out as a flat binary (gaps filled) from its span."""
 

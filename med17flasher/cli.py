@@ -79,6 +79,13 @@ def _build_uds(bus, profile: EcuProfile) -> UdsClient:
 def _seedkey_resolver(args, profile: EcuProfile):
     """Pick a seed/key resolver from the CLI arguments."""
 
+    if getattr(args, "seedkey_dll", None) or getattr(args, "seedkey_exe", None):
+        from .seedkey import AlgorithmResolver, make_backend
+
+        spec = (f"dll:{args.seedkey_dll}" if args.seedkey_dll
+                else f"exe:{args.seedkey_exe}")
+        kwargs = {"options": getattr(args, "seedkey_options", "")} if args.seedkey_dll else {}
+        return AlgorithmResolver(make_backend(spec, **kwargs))
     if getattr(args, "seedkey_server", None):
         from .seedkey.server import SeedKeyClient
 
@@ -317,7 +324,13 @@ def cmd_seedkey(args) -> int:
     for item in args.param or []:
         key, _, value = item.partition("=")
         params[key] = value
-    if args.store:
+    if args.dll or args.exe:
+        from .seedkey import make_backend
+
+        spec = f"dll:{args.dll}" if args.dll else f"exe:{args.exe}"
+        kwargs = {"options": args.options} if args.dll else {}
+        key = make_backend(spec, **kwargs).compute(seed, level=args.level, params=params)
+    elif args.store:
         store = SeedKeyStore.load(args.store)
         key = store.compute(args.ecu, args.level, seed)
     else:
@@ -548,8 +561,16 @@ def _dump_profile(profile, path: str) -> None:
 def cmd_seedkey_server(args) -> int:
     from .seedkey.server import SeedKeyHttpServer, SeedKeyService, SeedKeyTcpServer
 
+    algorithm = None
+    if args.dll or args.exe:
+        from .seedkey import make_backend
+
+        spec = f"dll:{args.dll}" if args.dll else f"exe:{args.exe}"
+        kwargs = {"options": args.options} if args.dll else {}
+        algorithm = make_backend(spec, **kwargs)
+        print(f"seed/key backend: {spec}")
     store = SeedKeyStore.load(args.store) if args.store else SeedKeyStore.default()
-    service = SeedKeyService(store)
+    service = SeedKeyService(store, algorithm=algorithm)
     http = SeedKeyHttpServer(service, host=args.host, port=args.port)
     tcp = SeedKeyTcpServer(service, host=args.host, port=args.tcp_port)
     http.start(block=False)
@@ -703,6 +724,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rx", type=lambda x: int(x, 0), help="override response CAN id")
     p.add_argument("--seedkey-store", help="seed/key store JSON")
     p.add_argument("--seedkey-server", help="seed/key HTTP server URL")
+    p.add_argument("--seedkey-dll", help="J2534 seed-key DLL (32-bit Windows)")
+    p.add_argument("--seedkey-exe", help="external seed-key executable")
+    p.add_argument("--seedkey-options", default="", help="option string for the seed-key DLL")
     p.add_argument("--plugin", help="seed/key algorithm plug-in .py to load")
     p.add_argument("--no-identify", action="store_true", help="skip reading identification DIDs")
     p.add_argument("--dry-run", action="store_true", help="plan the flash but do not write")
@@ -750,6 +774,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--level", type=lambda x: int(x, 0), default=0x11)
     p.add_argument("--param", action="append", help="algorithm parameter key=value (repeatable)")
     p.add_argument("--store", help="use a seed/key store JSON instead of --algorithm")
+    p.add_argument("--dll", help="compute via a J2534 seed-key DLL (32-bit Windows)")
+    p.add_argument("--exe", help="compute via an external seed-key executable")
+    p.add_argument("--options", default="", help="option/config string passed to the DLL")
     p.set_defaults(func=cmd_seedkey)
 
     # seedkey-solve
@@ -797,6 +824,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8377)
     p.add_argument("--tcp-port", type=int, default=8378)
     p.add_argument("--store", help="seed/key store JSON")
+    p.add_argument("--dll", help="serve keys via a J2534 seed-key DLL (32-bit Windows)")
+    p.add_argument("--exe", help="serve keys via an external seed-key executable")
+    p.add_argument("--options", default="", help="option/config string passed to the DLL")
     p.set_defaults(func=cmd_seedkey_server)
 
     # fileserver

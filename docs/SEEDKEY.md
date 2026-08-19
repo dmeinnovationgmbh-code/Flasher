@@ -124,6 +124,27 @@ print(best.algorithm, best.params)   # e.g. med17 {'k': ..., 'rounds': 5, 'shift
 > constants; when it can't be recovered, plug the routine in directly as a
 > plug-in (above).
 
+## Using a vendor seed/key DLL or EXE
+
+Production ECU flashing usually keeps the secret routine in a **J2534 seed-key
+DLL** (exports `GenerateKeyExOpt` / `GetSeedLength` / `GetKeyLength` / …) or a
+small `*-seed-key.exe`. Both plug in directly:
+
+```bash
+# compute a key with a DLL (32-bit Windows / Wine - the DLL is 32-bit stdcall):
+med17flasher seedkey <seedhex> --dll MED1775_12_42_00.dll --level 0x05
+
+# flash using the DLL for Security Access:
+med17flasher flash --seedkey-dll MED1775_12_42_00.dll ...
+
+# or an external executable (stdout = key hex), like execa('cpcng-seed-key.exe'):
+med17flasher flash --seedkey-exe cpcng-seed-key.exe ...
+```
+
+Because the DLL is 32-bit and Windows-only, the cleanest deployment is to run a
+**seed/key server** on the Windows host (see below) that fronts the DLL, and let
+the flasher run anywhere. See [`MED1775.md`](MED1775.md) for the full flow.
+
 ## The seed/key server
 
 Traditionally the secret routine lives behind a small network service so it sits
@@ -131,10 +152,14 @@ in one place. This toolkit ships one (HTTP + a line-based TCP protocol):
 
 ```bash
 med17flasher seedkey-server --store my_seedkeys.json
+# or front a vendor DLL/EXE (run on the 32-bit Windows host):
+med17flasher seedkey-server --dll MED1775_12_42_00.dll
+med17flasher seedkey-server --exe cpcng-seed-key.exe
 ```
 
 * **HTTP**: `POST /seedkey` with `{"ecu": "...", "level": 17, "seed": "11223344"}`
-  → `{"key": "..."}`. Also `GET /algorithms`, `GET /entries`, `GET /health`.
+  → `{"key": "..."}`. Also `GET /key/<level>/<seedhex>` → `{"key": "..."}`
+  (production-compatible), `GET /algorithms`, `GET /entries`, `GET /health`.
 * **TCP**: send `MED17.7.5 0x11 11223344\n` → `OK <keyhex>\n`.
 
 Point the flasher at it instead of a local store:

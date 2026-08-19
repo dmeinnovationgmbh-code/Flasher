@@ -29,15 +29,36 @@ log = get_logger("seedkey.server")
 
 
 class SeedKeyService:
-    """The transport-agnostic core used by both the HTTP and TCP servers."""
+    """The transport-agnostic core used by both the HTTP and TCP servers.
 
-    def __init__(self, store: Optional[SeedKeyStore] = None) -> None:
+    With ``algorithm`` set (e.g. a :class:`~med17flasher.seedkey.dll.DllSeedKey`
+    or :class:`~med17flasher.seedkey.dll.ExeSeedKey`), every request is served by
+    that backend regardless of the ECU name - which is how you front a vendor
+    seed-key DLL. Otherwise requests resolve through the :class:`SeedKeyStore`.
+    """
+
+    def __init__(
+        self,
+        store: Optional[SeedKeyStore] = None,
+        algorithm=None,
+        default_ecu: str = "MED17.7.5",
+    ) -> None:
         self.store = store or SeedKeyStore.default()
+        self.algorithm = algorithm
+        self.default_ecu = default_ecu
 
     def compute_hex(self, ecu: str, level: int, seed_hex: str) -> str:
         seed = bytes.fromhex(seed_hex.replace(" ", ""))
-        key = self.store.compute(ecu, level, seed)
+        if self.algorithm is not None:
+            key = self.algorithm.compute(seed, level=level, params={})
+        else:
+            key = self.store.compute(ecu, level, seed)
         return key.hex()
+
+    def key_for(self, level: int, seed_hex: str) -> str:
+        """Compute a key for the default ECU / configured backend (for GET /key)."""
+
+        return self.compute_hex(self.default_ecu, level, seed_hex)
 
     def compute_with_algorithm(
         self, algorithm: str, level: int, seed_hex: str, params: Optional[dict] = None
@@ -68,6 +89,16 @@ class _HttpHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 (http.server naming)
         svc: SeedKeyService = self.server.service  # type: ignore[attr-defined]
+        # Compat route: GET /key/<level>/<seedhex> -> {"key": "..."} (matches the
+        # `curl http://host:5000/key/05/183fd11c` production pattern).
+        parts = [p for p in self.path.split("/") if p]
+        if len(parts) == 3 and parts[0] == "key":
+            try:
+                level = int(parts[1], 16)
+                self._send_json(200, {"key": svc.key_for(level, parts[2])})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(422, {"error": str(exc)})
+            return
         if self.path == "/health":
             self._send_json(200, {"status": "ok"})
         elif self.path == "/algorithms":

@@ -1,0 +1,77 @@
+# MED17.7.5 ("med1775") profile - modelled on a real production flash flow.
+#
+# Reproduces: security level 0x05/0x06, whole-flash erase (RoutineControl
+# 0x31 01 FF00 with no argument), NO checkMemory (checksum disabled), fingerprint
+# writes via DID 0xF15A, a pre-flash hard reset + settle, and a final clear-DTC
+# in the extended session.
+#
+# Two calibration transfer variants are valid (pick the one matching your file):
+#   transferAddress 0x84002000  length 0x000FE000   (default below)
+#   transferAddress 0x80140000  length 0x000C0000
+#
+# The calibration image must start with 0x60 and end with 0xDE.
+#
+# VERIFY every value against your ECU/ODX before writing to hardware. The
+# seed/key is supplied at runtime via a J2534 DLL: use
+#   --seedkey-dll MED1775_12_42_00.dll   (32-bit Windows), or
+#   --seedkey-server http://host:5000    (a seed/key server fronting the DLL).
+name: MED17.7.5
+description: MED17.7.5 (med1775) - real production flow (calibration flash)
+
+can:
+  tx_id: 0x7E0
+  rx_id: 0x7E8
+  functional_id: 0x7DF
+  padding_byte: 0x00      # verify: some setups use 0xAA/0x55/none
+
+timing:
+  p2: 1.0
+  p2_star: 5.0
+  tester_present_period: 2.0
+  routine_timeout: 60.0
+
+security:
+  request_seed_level: 0x05
+  send_key_level: 0x06
+  algorithm: med17        # placeholder - supply the real DLL via --seedkey-dll
+  params: {}
+
+routines:
+  erase_memory: 0xFF00
+  check_programming_dependencies: 0xFF01
+  check_memory: 0x0202
+  erase_argument: none     # 0x31 01 FF00 with no address/size (whole flash)
+
+transfer_data_format: 0x00
+programming_session: 0x02
+
+# Real-world flow tweaks
+pre_hard_reset: true
+settle_delay: 10.0         # lower to 0 when testing against the simulator
+verify_after_write: false  # checksum:false -> no checkMemory
+clear_dtc_after: true
+final_session: 0x03
+
+fingerprints:
+  - did: 0xF15A
+    value: "020004110A0B00191471"
+    when: after_security
+  - did: 0xF15A
+    value: "0000030D090600000000"
+    when: after_download
+
+# Optional Mercedes gateway / diagnostic-firewall unlock before flashing.
+# Uncomment and verify if your setup routes through an EZS gateway:
+# gateway:
+#   tx_id: 0x607
+#   rx_id: 0x587
+#   security_level: 0x39
+#   algorithm: med17
+#   params: {}
+
+memory_map:
+  - name: CAL
+    start: 0x84002000
+    size:  0x000FE000
+    erase: true
+    checksum: crc32

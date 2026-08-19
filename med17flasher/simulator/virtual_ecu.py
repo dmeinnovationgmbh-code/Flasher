@@ -184,6 +184,7 @@ class VirtualEcu:
             C.Service.TRANSFER_DATA: self._h_transfer_data,
             C.Service.REQUEST_TRANSFER_EXIT: self._h_transfer_exit,
             C.Service.READ_MEMORY_BY_ADDRESS: self._h_read_memory,
+            C.Service.CLEAR_DIAGNOSTIC_INFORMATION: self._h_clear_dtc,
         }.get(sid)
         if handler is None:
             return self._nrc(sid, C.NRC.SERVICE_NOT_SUPPORTED)
@@ -250,6 +251,10 @@ class VirtualEcu:
     def _h_comm_control(self, req: bytes) -> bytes:
         return self._positive(req[0]) + bytes([req[1]])
 
+    def _h_clear_dtc(self, req: bytes) -> bytes:
+        # 0x14 <groupOfDTC:3> -> 0x54
+        return self._positive(req[0])
+
     def _h_dtc(self, req: bytes) -> bytes:
         return self._positive(req[0]) + bytes([req[1]])
 
@@ -297,8 +302,14 @@ class VirtualEcu:
             return self._nrc(req[0], C.NRC.SECURITY_ACCESS_DENIED)
         address, size = self._parse_addr_size(data)
         if address is None:
+            if not data:
+                # No argument -> whole-flash erase (matches erase_argument "none").
+                self._emit_pending(req[0])
+                self._mem[:] = b"\xff" * len(self._mem)
+                self.erased_regions.append((self._base, len(self._mem)))
+                return self._positive(req[0]) + bytes([req[1], req[2], req[3], 0x00])
             # block_id form: a single byte index into the memory map.
-            if data and data[0] < len(self.profile.memory_map):
+            if data[0] < len(self.profile.memory_map):
                 region = self.profile.memory_map[data[0]]
                 address, size = region.start, region.size
             else:
