@@ -5,6 +5,9 @@ list of sub-commands:
 
 * ``flash``          - reprogram an ECU from a firmware file
 * ``identify``       - read the ECU's identification DIDs
+* ``convert``        - convert bin/Intel-HEX/S-Record to a flat .bin
+* ``inflate``        - inflate DEFLATE/zlib/gzip data (e.g. a compressed section)
+* ``extract-calibration`` - slice a flashable calibration out of a full ECU read
 * ``scan``           - read-only ECU reconnaissance (sessions / DIDs / seeds)
 * ``capture``        - passively record CAN frames to a candump log
 * ``read``           - read a memory range to a file
@@ -234,6 +237,112 @@ def cmd_read(args) -> int:
         if sim:
             sim.stop()
         bus.close()
+
+
+def cmd_convert(args) -> int:
+    """Convert any firmware container (bin/Intel-HEX/S-Record) to a flat .bin."""
+
+    if args.inflate:
+        from .core.compression import inflate
+
+        with open(args.input, "rb") as fh:
+            raw = fh.read()
+        data, mode = inflate(raw, offset=args.offset, mode=args.mode)
+        with open(args.output, "wb") as fh:
+            fh.write(data)
+        print(f"{args.input} -> {args.output} (inflated {mode}, offset 0x{args.offset:X})")
+        print(f"  {len(raw)} -> {len(data)} bytes")
+        return 0
+
+    from .core import load_firmware
+    from .core.firmware import save_binary
+
+    image = load_firmware(args.input, base_address=args.base)
+    low, high = image.span
+    save_binary(image, args.output, fill=args.fill)
+    size = os.path.getsize(args.output)
+    print(f"{args.input} -> {args.output}")
+    print(f"  span 0x{low:08X}..0x{high:08X}, {size} bytes ({len(image.segments)} segment(s))")
+    return 0
+
+
+def cmd_inflate(args) -> int:
+    """Inflate DEFLATE/zlib/gzip data (e.g. a Mercedes flash section) to raw bytes."""
+
+    from .core.compression import inflate, inflate_sections
+
+    with open(args.input, "rb") as fh:
+        raw = fh.read()
+    if args.sections:
+        parts = inflate_sections(raw, offset=args.offset)
+        if not parts:
+            print("no inflatable sections found", file=sys.stderr)
+            return 1
+        blob = b"".join(parts)
+        with open(args.output, "wb") as fh:
+            fh.write(blob)
+        print(f"{args.input} -> {args.output}: {len(parts)} section(s), {len(blob)} bytes total")
+        for i, part in enumerate(parts):
+            print(f"  section {i}: {len(part)} bytes")
+        return 0
+    data, mode = inflate(raw, offset=args.offset, mode=args.mode)
+    with open(args.output, "wb") as fh:
+        fh.write(data)
+    print(f"{args.input} -> {args.output} (inflated {mode}, offset 0x{args.offset:X}): "
+          f"{len(raw)} -> {len(data)} bytes")
+    return 0
+
+
+# Known med1775 calibration variants: transferAddress -> (offset in a full read, length)
+_CAL_VARIANTS = {
+    0x84002000: (0x00402000, 0x000FE000),
+    0x80140000: (0x00140000, 0x000C0000),
+}
+
+
+def cmd_extract_calibration(args) -> int:
+    """Slice a flashable calibration out of a full ECU read and validate it.
+
+    Mirrors the production logic: for a full read, take
+    ``data[offset : offset + length]`` for the chosen transferAddress; the result
+    must start with 0x60 and end with 0xDE.
+    """
+
+    from .core.firmware import validate_calibration
+
+    with open(args.input, "rb") as fh:
+        data = fh.read()
+
+    if args.address in _CAL_VARIANTS and (args.offset is None or args.length is None):
+        offset, length = _CAL_VARIANTS[args.address]
+    else:
+        if args.offset is None or args.length is None:
+            print("unknown --address; pass --offset and --length explicitly",
+                  file=sys.stderr)
+            return 2
+        offset, length = args.offset, args.length
+
+    if args.full_read:
+        cal = data[offset : offset + length]
+    else:
+        cal = data[:length]
+
+    print(f"transferAddress 0x{args.address:08X}: offset 0x{offset:X}, length 0x{length:X}")
+    if len(cal) != length:
+        print(f"ERROR: sliced {len(cal)} bytes, expected 0x{length:X}", file=sys.stderr)
+        return 1
+    try:
+        validate_calibration(cal, length=length)
+    except Med17FlasherError as exc:
+        print(f"WARNING: calibration signature check failed: {exc}", file=sys.stderr)
+        if not args.force:
+            print("  refusing to write (use --force to override)", file=sys.stderr)
+            return 1
+    with open(args.output, "wb") as fh:
+        fh.write(cal)
+    print(f"wrote {len(cal)} bytes -> {args.output} "
+          f"(starts 0x{cal[0]:02X}, ends 0x{cal[-1]:02X})")
+    return 0
 
 
 def cmd_scan(args) -> int:
@@ -744,6 +853,52 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--size", type=lambda x: int(x, 0), required=True)
     p.add_argument("-o", "--output", required=True)
     p.set_defaults(func=cmd_read)
+
+    # convert
+    p = sub.add_parser("convert", help="convert bin/Intel-HEX/S-Record to a flat .bin")
+    p.add_argument("input", help="firmware file (.bin/.hex/.s19/.srec)")
+    p.add_argument("-o", "--output", required=True, help="output .bin")
+    p.add_argument("--base", type=lambda x: int(x, 0), default=0,
+                   help="base address for raw .bin inputs")
+    p.add_argument("--fill", type=lambda x: int(x, 0), default=0xFF,
+                   help="fill byte for gaps (default 0xFF)")
+    p.add_argument("--inflate", action="store_true",
+                   help="the input is DEFLATE/zlib/gzip compressed - inflate it")
+    p.add_argument("--offset", type=lambda x: int(x, 0), default=0,
+                   help="start offset of the compressed stream (with --inflate)")
+    p.add_argument("--mode", choices=["auto", "raw", "zlib", "gzip"], default="auto",
+                   help="compression mode for --inflate (default auto)")
+    p.set_defaults(func=cmd_convert)
+
+    # inflate
+    p = sub.add_parser("inflate", help="inflate DEFLATE/zlib/gzip data to raw bytes")
+    p.add_argument("input", help="compressed input file (e.g. a .cff / flash section)")
+    p.add_argument("-o", "--output", required=True, help="output .bin")
+    p.add_argument("--offset", type=lambda x: int(x, 0), default=0,
+                   help="start offset of the compressed stream (e.g. 0x30)")
+    p.add_argument("--mode", choices=["auto", "raw", "zlib", "gzip"], default="auto")
+    p.add_argument("--sections", action="store_true",
+                   help="inflate consecutive raw-DEFLATE sections and concatenate")
+    p.set_defaults(func=cmd_inflate)
+
+    # extract-calibration
+    p = sub.add_parser("extract-calibration",
+                       help="slice a flashable calibration out of a full ECU read")
+    p.add_argument("input", help="full ECU read (.bin)")
+    p.add_argument("-o", "--output", required=True, help="output calibration .bin")
+    p.add_argument("--address", type=lambda x: int(x, 0), default=0x84002000,
+                   help="transferAddress (0x84002000 or 0x80140000)")
+    p.add_argument("--offset", type=lambda x: int(x, 0), default=None,
+                   help="override slice offset in the full read")
+    p.add_argument("--length", type=lambda x: int(x, 0), default=None,
+                   help="override calibration length")
+    p.add_argument("--full-read", action="store_true", default=True,
+                   help="input is a full read (slice at offset); default on")
+    p.add_argument("--no-full-read", dest="full_read", action="store_false",
+                   help="input already starts at the calibration")
+    p.add_argument("--force", action="store_true",
+                   help="write even if the 0x60..0xDE signature check fails")
+    p.set_defaults(func=cmd_extract_calibration)
 
     # scan
     p = sub.add_parser("scan", help="read-only ECU reconnaissance (sessions/DIDs/seeds)")
