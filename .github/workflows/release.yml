@@ -58,13 +58,20 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           # PyInstaller wrote dist/med17flasher-desktop.exe -> put it back under
           # the name the .iss expects, then compile the installer.
           Copy-Item "dist/${{ matrix.asset }}" "dist/med17flasher-desktop.exe" -Force
           $ver = "${{ github.ref_name }}" -replace '^v',''
           if ([string]::IsNullOrWhiteSpace($ver) -or $ver -notmatch '^\d') { $ver = "1.0.0" }
           choco install innosetup --no-progress -y
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=$ver packaging\windows_installer.iss
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found at $iscc" }
+          & $iscc "/DAppVersion=$ver" packaging\windows_installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+          if (-not (Test-Path "dist/installer/med17flasher-setup.exe")) {
+            throw "installer was not produced at dist/installer/med17flasher-setup.exe"
+          }
       - name: Upload Windows installer
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4

@@ -8,9 +8,12 @@
 ;   iscc packaging\windows_installer.iss
 ; Output: dist\installer\med17flasher-setup.exe
 ;
-; The compiler is invoked from the repository root, so all paths are relative to
-; that root.
+; NOTE: Inno Setup resolves relative paths against the directory containing THIS
+; script (packaging\), not against the current working directory. Every path
+; below therefore goes through {#RepoRoot}, which points at the repo root, so the
+; script compiles identically from any CWD.
 
+#define RepoRoot      AddBackslash(SourcePath) + ".."
 #define AppName       "MED17.7.5 Flash Tool"
 #define AppShortName  "MED17 Flash Tool"
 #define AppPublisher  "DME Innovation GmbH"
@@ -20,7 +23,7 @@
 #endif
 
 [Setup]
-AppId={{5B0C6E2A-3D71-4C9F-9E2B-MED1775FLASH}}
+AppId={{5B0C6E2A-3D71-4C9F-9E2B-7F1A6C4D0E93}}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
@@ -28,15 +31,14 @@ DefaultDirName={autopf}\MED17FlashTool
 DefaultGroupName={#AppShortName}
 DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\{#AppExeName}
-OutputDir=dist\installer
+OutputDir={#RepoRoot}\dist\installer
 OutputBaseFilename=med17flasher-setup
-SetupIconFile=packaging\icon.ico
+SetupIconFile={#RepoRoot}\packaging\icon.ico
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-ArchitecturesInstallIn64BitMode=x64compatible
-; Per-user install by default so no admin prompt is needed.
-PrivilegesRequiredOverridesAllowed=dialog
+; Per-user install: no UAC prompt, installs under %LOCALAPPDATA%\Programs.
+PrivilegesRequired=lowest
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -46,10 +48,11 @@ Name: "german";  MessagesFile: "compiler:Languages\German.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "dist\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "packaging\icon.ico";  DestDir: "{app}"; Flags: ignoreversion
-Source: "README.md";           DestDir: "{app}"; Flags: ignoreversion isreadme
-Source: "docs\SAFETY.md";      DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "{#RepoRoot}\dist\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#RepoRoot}\packaging\icon.ico";  DestDir: "{app}"; Flags: ignoreversion
+Source: "{#RepoRoot}\README.md";           DestDir: "{app}"; Flags: ignoreversion
+Source: "{#RepoRoot}\docs\SAFETY.md";      DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "{#RepoRoot}\docs\INSTALL.md";     DestDir: "{app}\docs"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppShortName}"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\icon.ico"
