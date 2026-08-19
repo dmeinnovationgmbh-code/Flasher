@@ -51,11 +51,17 @@ _MIME = {
 def _static_root() -> Optional[str]:
     """Locate the built web UI (webui/dist), if present."""
 
+    import sys
+
     here = os.path.dirname(os.path.abspath(__file__))
     candidates = [
         os.path.join(here, "static"),  # packaged copy
         os.path.normpath(os.path.join(here, "..", "..", "webui", "dist")),  # repo build
     ]
+    # PyInstaller one-file bundle extracts data files under sys._MEIPASS.
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.insert(0, os.path.join(meipass, "webui", "dist"))
     for path in candidates:
         if os.path.isdir(path) and os.path.isfile(os.path.join(path, "index.html")):
             return path

@@ -38,6 +38,12 @@ seedkey-server:
 simulator:
 	$(PY) -m med17flasher simulator
 
+desktop:
+	cd webui && npm ci && npm run build
+	$(PY) -m pip install pyinstaller
+	$(PY) -m PyInstaller --clean --noconfirm packaging/med17flasher.spec
+	@echo "built: dist/med17flasher-desktop"
+
 clean:
 	rm -rf build dist *.egg-info .pytest_cache
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

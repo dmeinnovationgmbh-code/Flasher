@@ -28,6 +28,8 @@ yaml = ["PyYAML>=5.1"]
 can = ["python-can>=4.0"]
 serial = ["pyserial>=3.4"]
 dev = ["pytest>=7.0", "PyYAML>=5.1"]
+desktop = ["pywebview>=4.0"]
+build = ["pyinstaller>=6.0"]
 all = ["PyYAML>=5.1", "python-can>=4.0", "pyserial>=3.4"]
 
 [project.scripts]
@@ -36,6 +38,7 @@ med17-flasher = "med17flasher.cli:main"
 
 [project.gui-scripts]
 med17flasher-gui = "med17flasher.gui.app:main"
+med17flasher-desktop = "med17flasher.desktop:main"
 
 [tool.setuptools.packages.find]
 include = ["med17flasher*"]

@@ -95,7 +95,7 @@ class FlashService:
         firmware_path: Optional[str] = None,
         allow_write: bool = False,
     ) -> None:
-        self.profile = profile or load_profile(_default_profile_path())
+        self.profile = profile or _load_default_profile()
         self.throttle_kbs = throttle_kbs
         self.backend = backend
         self.is_simulator = backend == "simulator"
@@ -394,9 +394,45 @@ class FlashService:
                  f"Sektor {p.block_name} · Prüfsumme verifiziert")
 
 
-def _default_profile_path() -> str:
+def _default_profile_path() -> Optional[str]:
     import os
+    import sys
 
+    candidates = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:  # PyInstaller bundle
+        candidates.append(os.path.join(meipass, "config", "med17_7_5_c63.yaml"))
     here = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    path = os.path.join(here, "config", "med17_7_5_c63.yaml")
-    return path if os.path.isfile(path) else "config/med17_7_5_c63.yaml"
+    candidates.append(os.path.join(here, "config", "med17_7_5_c63.yaml"))
+    candidates.append("config/med17_7_5_c63.yaml")
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _load_default_profile() -> EcuProfile:
+    path = _default_profile_path()
+    if path:
+        return load_profile(path)
+    # Fallback (e.g. bundle without the config): a C63-shaped built-in profile.
+    from ..core.ecu_profile import (
+        CanConfig,
+        MemoryRegion,
+        RoutineConfig,
+        SecurityConfig,
+    )
+
+    return EcuProfile(
+        name="MED17.7.5",
+        can=CanConfig(tx_id=0x7E0, rx_id=0x7E8, padding_byte=0x55),
+        security=SecurityConfig(request_seed_level=0x11, send_key_level=0x12,
+                                algorithm="med17",
+                                params={"k": "0x1C5A36B7", "rounds": 5, "shift": 5}),
+        routines=RoutineConfig(),
+        memory_map=[
+            MemoryRegion("CBOOT", 0x80008000, 0x30000),
+            MemoryRegion("ASW", 0x80038000, 0x150000),
+            MemoryRegion("CAL", 0x80188000, 0x78000),
+        ],
+    )

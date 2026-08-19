@@ -1,0 +1,65 @@
+# PyInstaller spec for the MED17.7.5 Flash Tool desktop app.
+# Build:  pyinstaller packaging/med17flasher.spec
+# Output: dist/med17flasher-desktop  (a single downloadable executable)
+#
+# Bundles the built React UI (webui/dist) and the ECU profiles (config/) as
+# data so the one-file executable serves the UI and loads profiles offline.
+
+import os
+
+block_cipher = None
+
+ROOT = os.path.abspath(os.getcwd())
+
+datas = [
+    (os.path.join(ROOT, "webui", "dist"), "webui/dist"),
+    (os.path.join(ROOT, "config"), "config"),
+]
+
+# Optional integrations light up only if installed; don't hard-require them.
+hiddenimports = []
+for opt in ("can", "serial", "webview", "yaml"):
+    try:
+        __import__(opt)
+        hiddenimports.append(opt)
+    except Exception:
+        pass
+
+a = Analysis(
+    [os.path.join(ROOT, "packaging", "desktop_entry.py")],
+    pathex=[ROOT],
+    binaries=[],
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    runtime_hooks=[],
+    excludes=["tkinter", "pytest"],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+    noarchive=False,
+)
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    [],
+    name="med17flasher-desktop",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=True,  # keep a console so users see the local URL / logs
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=None,
+)

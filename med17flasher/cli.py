@@ -221,20 +221,66 @@ def cmd_identify(args) -> int:
 
 def cmd_read(args) -> int:
     profile = _load_profile_arg(args.profile)
+    if args.tx is not None:
+        profile.can.tx_id = args.tx
+    if args.rx is not None:
+        profile.can.rx_id = args.rx
+
+    # Resolve the region: explicit --address/--size, or a named memory-map region.
+    address, size = args.address, args.size
+    if args.region:
+        region = next((r for r in profile.memory_map if r.name.lower() == args.region.lower()), None)
+        if region is None:
+            print(f"no region named {args.region!r} in the profile "
+                  f"(have: {', '.join(r.name for r in profile.memory_map)})", file=sys.stderr)
+            return 2
+        address, size = region.start, region.size
+    if address is None or size is None:
+        print("specify --address and --size, or --region NAME", file=sys.stderr)
+        return 2
+
     bus, sim = _open_bus(args, profile)
+    uds = None
     try:
         uds = _build_uds(bus, profile)
-        if not args.simulator:
+        uds.start_tester_present(profile.timing.tester_present_period)
+        try:
             uds.enter_extended_session()
-        data = uds.read_memory_by_address(args.address, args.size)
+        except Med17FlasherError:
+            pass
+        if args.secure:
+            resolver = _seedkey_resolver(args, profile)
+            print(f"security access (level 0x{profile.security.request_seed_level:02X}) ...")
+            seed = uds.request_seed(profile.security.request_seed_level)
+            if any(seed):
+                key = resolver.compute(profile.name, profile.security.request_seed_level, seed)
+                uds.send_key(profile.security.send_key_level, key)
+
+        chunk = args.chunk
+        data = bytearray()
+        print(f"reading 0x{size:X} bytes from 0x{address:08X} in 0x{chunk:X}-byte chunks ...")
+        while len(data) < size:
+            n = min(chunk, size - len(data))
+            block = uds.read_memory_by_address(address + len(data), n)
+            if not block:
+                print(f"\nECU returned no data at 0x{address + len(data):08X}", file=sys.stderr)
+                return 1
+            data.extend(block)
+            pct = int(100 * len(data) / size)
+            sys.stdout.write(f"\r  {len(data):#x}/{size:#x} ({pct:3d}%)")
+            sys.stdout.flush()
+        sys.stdout.write("\n")
         with open(args.output, "wb") as fh:
-            fh.write(data)
-        print(f"read {len(data)} bytes from 0x{args.address:08X} -> {args.output}")
+            fh.write(bytes(data[:size]))
+        print(f"read {len(data)} bytes from 0x{address:08X} -> {args.output}")
         return 0
     except Med17FlasherError as exc:
-        print(f"read failed: {exc}", file=sys.stderr)
+        print(f"\nread failed: {exc}", file=sys.stderr)
+        print("  note: MED17.7.5 flash reads usually need a programming/extended session "
+              "and Security Access (try --secure), or bench/boot mode.", file=sys.stderr)
         return 1
     finally:
+        uds.stop_tester_present() if 'uds' in dir() else None
         if sim:
             sim.stop()
         bus.close()
@@ -818,6 +864,12 @@ def cmd_gui(args) -> int:
     return gui_main(args)
 
 
+def cmd_desktop(args) -> int:
+    from .desktop import main as desktop_main
+
+    return desktop_main(args)
+
+
 def cmd_webserver(args) -> int:
     from .webserver import FlashService, WebServer
 
@@ -895,10 +947,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_identify)
 
     # read
-    p = sub.add_parser("read", help="read a memory range to a file")
+    p = sub.add_parser("read", help="read (download) a memory range / calibration to a file")
     add_bus_args(p)
-    p.add_argument("--address", type=lambda x: int(x, 0), required=True)
-    p.add_argument("--size", type=lambda x: int(x, 0), required=True)
+    p.add_argument("--address", type=lambda x: int(x, 0), help="start address")
+    p.add_argument("--size", type=lambda x: int(x, 0), help="number of bytes")
+    p.add_argument("--region", help="read a named memory-map region instead of --address/--size")
+    p.add_argument("--chunk", type=lambda x: int(x, 0), default=0x400,
+                   help="bytes per ReadMemoryByAddress request (default 0x400)")
+    p.add_argument("--secure", action="store_true", help="do Security Access before reading")
+    p.add_argument("--tx", type=lambda x: int(x, 0), help="override request CAN id")
+    p.add_argument("--rx", type=lambda x: int(x, 0), help="override response CAN id")
+    p.add_argument("--seedkey-store", help="seed/key store JSON (with --secure)")
+    p.add_argument("--seedkey-server", help="seed/key HTTP server URL (with --secure)")
+    p.add_argument("--seedkey-dll", help="J2534 seed-key DLL (with --secure)")
+    p.add_argument("--seedkey-exe", help="external seed-key executable (with --secure)")
+    p.add_argument("--seedkey-options", default="", help="option string for the seed-key DLL")
     p.add_argument("-o", "--output", required=True)
     p.set_defaults(func=cmd_read)
 
@@ -1063,8 +1126,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_profile)
 
     # gui
-    p = sub.add_parser("gui", help="launch the desktop GUI")
+    p = sub.add_parser("gui", help="launch the Tkinter desktop GUI")
     p.set_defaults(func=cmd_gui)
+
+    # desktop
+    p = sub.add_parser("desktop", help="launch the desktop app (web UI in a window/browser)")
+    p.set_defaults(func=cmd_desktop)
 
     # webserver
     p = sub.add_parser("webserver", help="serve the MED17 Flash Tool web UI + API")

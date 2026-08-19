@@ -45,6 +45,21 @@ pip install -e .
 
 The GUI needs Tkinter (usually `apt install python3-tk` on Debian/Ubuntu).
 
+## Download the desktop app
+
+The **MED17.7.5 Flash Tool** ships as a single standalone executable (no Python
+or Node needed) that opens the web UI in a window/browser and runs the real
+backend locally.
+
+* **Download a prebuilt binary** from the repository's **Releases** page
+  (`med17flasher-desktop-windows.exe`, `-macos`, `-linux`). Releases are built
+  automatically from a `v*` tag by `.github/workflows/release.yml` (Windows,
+  macOS and Linux). Download, run, done.
+* **Run from source:** `pip install -e . && med17flasher desktop`
+* **Build the binary yourself:** `make desktop`  (→ `dist/med17flasher-desktop`)
+
+Optional: `pip install pywebview` for a native window instead of the browser.
+
 ## 60-second tour (no hardware needed)
 
 ```bash
