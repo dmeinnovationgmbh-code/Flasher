@@ -85,6 +85,15 @@ med17flasher read           read a memory range to a file
 med17flasher seedkey        compute a key from a seed
 med17flasher seedkey-solve  recover a seed/key algorithm from captured pairs
 med17flasher seedkey-server run the seed/key network server (HTTP + TCP)
+med17flasher scan           read-only ECU reconnaissance (sessions/DIDs/seeds)
+med17flasher capture        passively record CAN frames to a candump log
+med17flasher analyze-trace  derive a profile + seed/key pairs from a CAN trace
+med17flasher analyze-firmware detect program regions in a firmware dump
+med17flasher checksum       verify/correct MEDC17 internal flash checksums
+med17flasher convert        convert bin/Intel-HEX/S-Record to a flat .bin
+med17flasher inflate        inflate DEFLATE/zlib/gzip data (e.g. a flash section)
+med17flasher extract-calibration  slice a flashable calibration from a full read
+med17flasher ingest         scan a folder (_input/) and auto-process files
 med17flasher fileserver     run the firmware file server
 med17flasher simulator      run a stand-alone virtual MED17.7.5
 med17flasher backends       list usable CAN backends and seed/key algorithms

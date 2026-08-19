@@ -5,6 +5,7 @@ list of sub-commands:
 
 * ``flash``          - reprogram an ECU from a firmware file
 * ``identify``       - read the ECU's identification DIDs
+* ``checksum``       - verify/correct MEDC17 internal flash checksums
 * ``convert``        - convert bin/Intel-HEX/S-Record to a flat .bin
 * ``inflate``        - inflate DEFLATE/zlib/gzip data (e.g. a compressed section)
 * ``extract-calibration`` - slice a flashable calibration out of a full ECU read
@@ -237,6 +238,53 @@ def cmd_read(args) -> int:
         if sim:
             sim.stop()
         bus.close()
+
+
+def cmd_checksum(args) -> int:
+    """Verify or correct MEDC17/EDC17 internal flash checksums."""
+
+    from .core import medc17_checksum as mc
+
+    with open(args.input, "rb") as fh:
+        data = fh.read()
+
+    if args.action == "verify":
+        results = mc.verify(data)
+        if not results:
+            print("no MEDC17 checksum blocks found "
+                  "(is this a raw MED17/EDC17 flash dump?)")
+            return 1
+        bad = 0
+        print(f"Found {len(results)} checksum region(s):")
+        for res in results:
+            r = res.region
+            status = "OK " if res.ok else "BAD"
+            if not res.ok:
+                bad += 1
+            print(f"  [{status}] {r.algo_name:5s} 0x{r.start_mem:08X}..0x{r.end_mem:08X} "
+                  f"computed=0x{res.computed:08X} target=0x{res.target:08X}")
+        print(f"{len(results) - bad} OK, {bad} need correction")
+        return 0 if bad == 0 else 2
+
+    # correct
+    if not args.output:
+        print("checksum correct needs -o/--output", file=sys.stderr)
+        return 2
+    fixed, before = mc.correct(data)
+    bad_before = [r for r in before if not r.ok]
+    after = mc.verify(fixed)
+    bad_after = [r for r in after if not r.ok]
+    with open(args.output, "wb") as fh:
+        fh.write(fixed)
+    changed = sum(1 for i in range(min(len(data), len(fixed))) if data[i] != fixed[i])
+    print(f"{args.input} -> {args.output}")
+    print(f"  regions: {len(before)}  corrected: {len(bad_before)}  "
+          f"still bad: {len(bad_after)}  bytes changed: {changed}")
+    for res in after:
+        r = res.region
+        print(f"  [{'OK ' if res.ok else 'BAD'}] {r.algo_name:5s} "
+              f"0x{r.start_mem:08X}..0x{r.end_mem:08X}")
+    return 0 if not bad_after else 1
 
 
 def cmd_convert(args) -> int:
@@ -853,6 +901,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--size", type=lambda x: int(x, 0), required=True)
     p.add_argument("-o", "--output", required=True)
     p.set_defaults(func=cmd_read)
+
+    # checksum
+    p = sub.add_parser("checksum", help="verify/correct MEDC17 internal flash checksums")
+    p.add_argument("action", choices=["verify", "correct"])
+    p.add_argument("input", help="MED17/EDC17 flash .bin")
+    p.add_argument("-o", "--output", help="output .bin (for 'correct')")
+    p.set_defaults(func=cmd_checksum)
 
     # convert
     p = sub.add_parser("convert", help="convert bin/Intel-HEX/S-Record to a flat .bin")
