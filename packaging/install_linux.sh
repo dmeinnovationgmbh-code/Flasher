@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Install the MED17.7.5 Flash Tool on a Linux desktop (per-user, no root).
+# Install the DME Innovation MED17 Flasher on a Linux desktop (per-user, no root).
 #
 # Run this from the folder that contains the downloaded binary, e.g.:
 #   sh install_linux.sh ./med17flasher-desktop-linux
@@ -37,4 +37,4 @@ case ":${PATH}:" in
     *":${BIN_DIR}:"*) : ;;
     *) echo "note: add ${BIN_DIR} to your PATH to launch it by name" >&2 ;;
 esac
-echo "Launch it from your app menu ('MED17 Flash Tool') or run: med17flasher-desktop"
+echo "Launch it from your app menu ('DME Innovation MED17 Flasher') or run: med17flasher-desktop"

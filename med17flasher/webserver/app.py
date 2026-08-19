@@ -1,4 +1,4 @@
-"""HTTP server for the MED17 Flash Tool web UI.
+"""HTTP server for the DME Innovation MED17 Flasher web UI.
 
 Serves the built React app plus a small JSON/SSE API backed by
 :class:`~med17flasher.webserver.service.FlashService`. Dependency free
@@ -310,9 +310,9 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _fallback(self) -> None:
         html = (
-            "<!doctype html><meta charset=utf-8><title>MED17 Flash Tool</title>"
+            "<!doctype html><meta charset=utf-8><title>DME Innovation MED17 Flasher</title>"
             "<body style='font-family:sans-serif;max-width:640px;margin:60px auto;color:#1D1D1F'>"
-            "<h1>MED17 Flash Tool</h1>"
+            "<h1>DME Innovation MED17 Flasher</h1>"
             "<p>The web UI has not been built yet. Build it once with:</p>"
             "<pre style='background:#F5F5F7;padding:14px;border-radius:10px'>"
             "cd webui &amp;&amp; npm install &amp;&amp; npm run build</pre>"

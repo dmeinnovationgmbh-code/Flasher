@@ -1,6 +1,6 @@
 # Web UI
 
-`webui/` is the DME **MED17 Flash Tool** design, implemented as a React (Vite)
+`webui/` is the **DME Innovation MED17 Flasher** design, implemented as a React (Vite)
 app and served by the Python backend (`med17flasher webserver`). The flash view
 is wired to the **real** flashing engine; the OTS-Maps purchase flow is
 simulated exactly as in the design.

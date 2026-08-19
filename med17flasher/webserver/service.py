@@ -164,10 +164,13 @@ class FlashService:
     # Vehicle / maps / telemetry
     # ------------------------------------------------------------------ #
     def vehicle(self) -> dict:
+        from ..version import __version__
+
         data = dict(VEHICLE)
         data["sectors"] = SECTORS
         data["running"] = self._running
         data["volt"] = round(self._volt, 1)
+        data["version"] = __version__   # real package version, not a mock string
         return data
 
     def maps(self) -> List[dict]:

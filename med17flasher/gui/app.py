@@ -78,7 +78,7 @@ class FlasherApp:
         self.messagebox = messagebox
 
         self.root = tk.Tk()
-        self.root.title("MED17.7.5 Flasher")
+        self.root.title("DME Innovation MED17 Flasher")
         self.root.geometry("880x620")
         self.root.minsize(760, 520)
 

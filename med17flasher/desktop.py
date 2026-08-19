@@ -21,7 +21,7 @@ from .logging_setup import configure_logging, get_logger
 
 log = get_logger("desktop")
 
-_TITLE = "MED17.7.5 Flash Tool"
+_TITLE = "DME Innovation MED17 Flasher"
 
 
 def _log_path() -> str:

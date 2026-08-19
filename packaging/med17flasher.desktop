@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=MED17 Flash Tool
+Name=DME Innovation MED17 Flasher
 GenericName=ECU Flasher
 Comment=MED17.7.5 desktop flasher (UDS/ISO-TP over CAN) with seed/key and file server
 Exec=med17flasher-desktop

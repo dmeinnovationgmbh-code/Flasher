@@ -1,4 +1,6 @@
-# MED17.7.5 Desktop Flasher
+# DME Innovation MED17 Flasher
+
+<img src="webui/public/assets/dme-logo.svg" alt="DME Innovation" height="34">
 
 A **complete, hardware-agnostic desktop flashing toolkit** for the Bosch
 **MED17.7.5** engine control unit (Infineon TriCore, VAG platform). It speaks
@@ -26,7 +28,7 @@ any hardware.
 | **Seed/Key** | Pluggable algorithm framework + reference algorithms + a **J2534 seed-key DLL** / seed-key EXE backend + a JSON catalogue + a **solver** that recovers the algorithm from captured seed→key pairs + an HTTP/TCP **seed/key server** (with a production-style `GET /key/:level/:seed` route) |
 | **File server** | Dependency-free HTTP REST firmware repository (upload/list/download/delete + metadata + bearer auth) with a client |
 | **Simulator** | A virtual MED17.7.5 that answers real UDS, including a genuine seed/key challenge and CRC-checked programming |
-| **Front-ends** | A **React (Vite) web UI** (the DME "MED17 Flash Tool" design, wired to the real flash engine via a JSON/SSE API), a Tkinter desktop GUI, and a full-featured CLI |
+| **Front-ends** | A **React (Vite) web UI** (the DME "DME Innovation MED17 Flasher" design, wired to the real flash engine via a JSON/SSE API), a Tkinter desktop GUI, and a full-featured CLI |
 
 The **core has no third-party dependencies** — it runs on a stock Python 3.8+.
 Optional adapters (`python-can`, `pyserial`) and YAML profiles (`PyYAML`) light
@@ -47,7 +49,7 @@ The GUI needs Tkinter (usually `apt install python3-tk` on Debian/Ubuntu).
 
 ## Download the desktop app
 
-The **MED17.7.5 Flash Tool** ships as a single standalone executable (no Python
+The **DME Innovation MED17 Flasher** ships as a single standalone executable (no Python
 or Node needed) that opens the web UI in a window/browser and runs the real
 backend locally. **See [`docs/INSTALL.md`](docs/INSTALL.md) for step-by-step
 per-OS install instructions.**
@@ -147,7 +149,7 @@ downloads and uploads firmware from the repository.
 
 ## Web UI (React)
 
-The `webui/` folder is the DME **MED17 Flash Tool** design (Mercedes-AMG C63 S
+The `webui/` folder is the DME **DME Innovation MED17 Flasher** design (Mercedes-AMG C63 S
 demo) built as a React (Vite) app. It is served by the Python backend and its
 flash view is driven by the **real** flash engine over a JSON/SSE API — the
 progress %, PFLASH sector map, address, KB/s and log lines all come from an

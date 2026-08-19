@@ -234,8 +234,10 @@ function Header({ voltText, bus }) {
     }}>
       <img src="./assets/dme-logo.svg" alt="DME Innovation" style={{ height: 22, width: 'auto' }} />
       <div style={{ width: 1, height: 18, background: 'rgba(0,0,0,.1)' }} />
+      {/* The logo already reads "DME Innovation"; together they say the full
+          product name without printing the company twice. */}
       <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: '.04em', whiteSpace: 'nowrap', textTransform: 'uppercase' }}>
-        MED17.7.5 Flash Tool
+        MED17 Flasher
       </div>
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 12px', borderRadius: 99, background: 'rgba(0,0,0,.04)', fontSize: 12, fontWeight: 500 }}>
@@ -960,7 +962,7 @@ function Sidebar({ vehicle, onTool }) {
       </section>
 
       <div style={{ fontSize: 11, color: FAINT, textAlign: 'center', lineHeight: 1.6 }}>
-        MED17 Flash Tool v2.4.1 · Build 8812<br />DME Innovation GmbH
+        MED17 Flasher {vehicle.version ? 'v' + vehicle.version : ''}<br />DME Innovation GmbH
       </div>
     </div>
   )

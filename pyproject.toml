@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "med17flasher"
 version = "1.0.0"
-description = "Complete desktop flasher for the Bosch MED17.7.5 ECU (UDS/ISO-TP over CAN) with seed/key and firmware file server"
+description = "DME Innovation MED17 Flasher - desktop flasher for the Bosch MED17.7.5 ECU (UDS/ISO-TP over CAN) with seed/key, XCP measurement and firmware file server"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }

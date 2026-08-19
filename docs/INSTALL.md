@@ -1,4 +1,4 @@
-# Installing the MED17.7.5 Flash Tool on your desktop
+# Installing the DME Innovation MED17 Flasher on your desktop
 
 The app ships as a **single standalone executable** – it already contains the
 Python backend, the web UI and the ECU profiles, so you do **not** need to
@@ -35,7 +35,7 @@ writes details to `med17flasher.log` in your temp folder.
 2. Double‑click it and follow the wizard. It installs to your user profile (no
    admin needed), adds a **Start‑menu** entry and, if you tick the box, a
    **desktop shortcut**.
-3. Launch **“MED17 Flash Tool”** from the Start menu.
+3. Launch **“DME Innovation MED17 Flasher”** from the Start menu.
 
 **Option B – portable (no install):**
 1. Download `med17flasher-desktop-windows.exe`.
@@ -69,7 +69,7 @@ chmod +x ./med17flasher-desktop-linux
 sh packaging/install_linux.sh ./med17flasher-desktop-linux
 ```
 This copies the binary to `~/.local/bin`, installs the icon and a `.desktop`
-entry so **“MED17 Flash Tool”** appears in your application menu.
+entry so **“DME Innovation MED17 Flasher”** appears in your application menu.
 
 To talk to real hardware you’ll typically want SocketCAN
 (`sudo apt install can-utils`) or a `python-can` adapter; the app runs fine
