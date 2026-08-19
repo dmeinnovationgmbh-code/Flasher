@@ -243,7 +243,10 @@ class FlashService:
     def _build_image(self) -> FirmwareImage:
         if not self.is_simulator:
             # Real hardware: only ever flash a real, supplied firmware image.
-            return load_firmware(self.firmware_path)
+            # A raw .bin has no addresses of its own, so anchor it at the first
+            # program region (ignored for HEX/S-Record which carry addresses).
+            base = self.profile.memory_map[0].start if self.profile.memory_map else 0
+            return load_firmware(self.firmware_path, base_address=base)
         image = FirmwareImage()
         for region in self.profile.memory_map:
             image.add_segment(region.start,
@@ -260,10 +263,12 @@ class FlashService:
             self._running = False
             return
 
-        uds, close = self._open_session()
+        # Reset the per-flash stage-log de-dup so every flash emits its log lines
+        # (not just the first flash of this service's lifetime).
+        self._logged = set()
+        close = None
         start = time.time()
-        self._broadcast({"type": "log", "cls": "accent", "msg": "Schreibvorgang gestartet"})
-        throttle_state = {"t0": time.time(), "bytes": 0}
+        throttle_state = {"t0": start, "bytes": 0}
 
         def progress(p: FlashProgress) -> None:
             if p.stage == Stage.TRANSFER:
@@ -272,6 +277,10 @@ class FlashService:
             self._emit_stage_log(p)
 
         try:
+            # Open the session INSIDE the try so a failure to open the bus/ECU
+            # surfaces an error and always clears _running in finally.
+            uds, close = self._open_session()
+            self._broadcast({"type": "log", "cls": "accent", "msg": "Schreibvorgang gestartet"})
             image = self._build_image()
             flasher = Flasher(uds, self.profile, ProfileSeedKey(self.profile),
                               progress=progress, abort_event=self._abort)
@@ -286,7 +295,8 @@ class FlashService:
             self._broadcast({"type": "log", "cls": "err", "msg": f"Fehler: {exc}"})
             self._broadcast({"type": "error", "msg": str(exc)})
         finally:
-            close()
+            if close is not None:
+                close()
             self._running = False
             self._speed = 0
 

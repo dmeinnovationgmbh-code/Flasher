@@ -158,10 +158,14 @@ class Flasher:
         overall_done = 0
         done_names: List[str] = []
 
-        self.uds.start_tester_present(self.profile.timing.tester_present_period)
+        self._whole_erased = False
         try:
+            # Do the (quick) pre-reset and gateway unlock BEFORE starting the
+            # TesterPresent keep-alive, so the gateway's separate UDS client
+            # never races the keep-alive on the shared bus.
             self._pre_reset()
             self._gateway_unlock()
+            self.uds.start_tester_present(self.profile.timing.tester_present_period)
             self._connect()
             self._preconditions()
             self._enter_programming_session()
@@ -259,11 +263,23 @@ class Flasher:
             if fp.when != when:
                 continue
             self._check_abort()
+            try:
+                value = bytes.fromhex(fp.value)
+            except ValueError as exc:
+                raise FlashError(
+                    f"fingerprint for DID 0x{fp.did:04X} is not valid hex "
+                    f"({fp.value!r}): {exc}"
+                ) from exc
             self._report(FlashProgress(Stage.SECURITY_ACCESS,
                                        message=f"fingerprint 0x{fp.did:04X}={fp.value}"))
-            self.uds.write_data_by_identifier(fp.did, bytes.fromhex(fp.value))
+            self.uds.write_data_by_identifier(fp.did, value)
 
     def _post_reset(self) -> None:
+        if not (self.profile.clear_dtc_after or self.profile.final_session is not None):
+            return
+        # The ECU just hard-reset and is rebooting; give it a moment before we
+        # talk again, else clear-DTC / session-change silently no-op.
+        time.sleep(min(self.profile.settle_delay, 2.0) or 1.0)
         if self.profile.clear_dtc_after:
             try:
                 self.uds.request(bytes([C.Service.CLEAR_DIAGNOSTIC_INFORMATION, 0xFF, 0xFF, 0xFF]))
@@ -360,6 +376,12 @@ class Flasher:
     def _erase_block(self, block: FlashBlock, index: int, count: int) -> None:
         if not block.erase:
             return
+        # A no-argument erase wipes the WHOLE flash, so do it exactly once -
+        # otherwise erasing block 2 would wipe block 1 that we just wrote.
+        if self.profile.routines.erase_argument == "none":
+            if getattr(self, "_whole_erased", False):
+                return
+            self._whole_erased = True
         self._check_abort()
         self._report(
             FlashProgress(

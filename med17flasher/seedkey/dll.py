@@ -160,6 +160,9 @@ class DllSeedKey(SeedKeyAlgorithm):
         key_size = ctypes.c_ulong(len(key_buf))
         seed_arr = (ctypes.c_ubyte * len(seed))(*seed)
 
+        opt_rc = None  # remember an Opt failure so we report it, not a false
+        #                 "exports neither" error, when GenerateKeyEx is absent.
+
         # Preferred: GenerateKeyExOpt(seed, seedSize, options, key, keySize)
         fn = self._func("GenerateKeyExOpt")
         if fn is not None:
@@ -171,6 +174,7 @@ class DllSeedKey(SeedKeyAlgorithm):
                     ctypes.byref(key_size))
             if rc == 0:
                 return bytes(key_buf[: key_size.value])
+            opt_rc = rc
             log.debug("GenerateKeyExOpt returned %d, trying GenerateKeyEx", rc)
 
         # Fallback: GenerateKeyEx(seed, seedSize, dllData, key, keySize)
@@ -187,6 +191,8 @@ class DllSeedKey(SeedKeyAlgorithm):
                 return bytes(key_buf[: key_size.value])
             raise SeedKeyError(f"seed-key DLL GenerateKeyEx failed (rc={rc})")
 
+        if opt_rc is not None:
+            raise SeedKeyError(f"seed-key DLL GenerateKeyExOpt failed (rc={opt_rc})")
         raise SeedKeyError(
             f"DLL {self.path!r} exports neither GenerateKeyExOpt nor GenerateKeyEx"
         )

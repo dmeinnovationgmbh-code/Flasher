@@ -197,19 +197,35 @@ class EcuProfile:
                 )
             )
 
+        def _fp_value(v: Any) -> str:
+            # A fingerprint is a hex string. If YAML parsed it as an int
+            # (unquoted digits / 0x...), render it back to even-length hex
+            # instead of its decimal text.
+            if isinstance(v, bool):
+                raise Med17FlasherError("fingerprint value must be a hex string")
+            if isinstance(v, int):
+                h = format(v, "x")
+                return ("0" + h) if len(h) % 2 else h
+            return str(v)
+
         fingerprints = [
-            FingerprintWrite(did=_int(f["did"]), value=str(f["value"]),
+            FingerprintWrite(did=_int(f["did"]), value=_fp_value(f["value"]),
                              when=f.get("when", "after_security"))
-            for f in data.get("fingerprints", [])
+            for f in (data.get("fingerprints") or [])
         ]
         gateway = None
         if data.get("gateway"):
             g = data["gateway"]
-            gateway = GatewayConfig(
-                tx_id=_int(g["tx_id"]), rx_id=_int(g["rx_id"]),
-                security_level=_int(g["security_level"]),
-                algorithm=g.get("algorithm", "med17"), params=g.get("params", {}),
-            )
+            try:
+                gateway = GatewayConfig(
+                    tx_id=_int(g["tx_id"]), rx_id=_int(g["rx_id"]),
+                    security_level=_int(g["security_level"]),
+                    algorithm=g.get("algorithm", "med17"), params=g.get("params", {}),
+                )
+            except KeyError as exc:
+                raise Med17FlasherError(
+                    f"gateway config is missing required field {exc}"
+                ) from exc
 
         profile = cls(
             name=data.get("name", "MED17.7.5"),
