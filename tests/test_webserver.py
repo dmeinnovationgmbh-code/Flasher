@@ -134,6 +134,144 @@ def test_desktop_main_keeps_console_on_startup_error(monkeypatch):
     assert desktop.main([]) == 1
 
 
+def test_list_profiles_includes_bundled(service):
+    profs = service.list_profiles()
+    ids = {p["id"] for p in profs}
+    assert "med17_7_5_med1775" in ids  # the real production flow
+    assert "med17_7_5_c63" in ids
+    assert all(p["path"] and p["id"] for p in profs)
+
+
+def test_list_backends(service):
+    b = service.list_backends()
+    ids = [x["id"] for x in b["backends"]]
+    assert "simulator" in ids
+    assert any(x["real"] for x in b["backends"])
+    assert not b["backends"][0]["real"]  # simulator first, non-real
+    assert "med17" in b["seedkeyAlgorithms"]
+
+
+def test_firmware_upload_summary(service):
+    data = bytes(range(256)) * 16  # 4096 bytes, one contiguous segment
+    summ = service.set_firmware("stage1.bin", data)
+    assert summ["size"] == 4096
+    assert summ["name"] == "stage1.bin"
+    assert summ["programBytes"] == 4096
+    assert summ["crc32"].startswith("0x") and len(summ["crc32"]) == 10
+    assert summ["segments"] and summ["segments"][0]["size"] == 4096
+    assert service.firmware_summary()["size"] == 4096
+
+
+def test_firmware_upload_rejects_empty(service):
+    with pytest.raises(ValueError):
+        service.set_firmware("x.bin", b"")
+
+
+def test_configure_expert_unknown_profile(service):
+    with pytest.raises(KeyError):
+        service.configure_expert(profile_id="does-not-exist")
+
+
+def test_build_resolver_sources(service):
+    from med17flasher.webserver.service import _builtin_c63_profile
+
+    prof = _builtin_c63_profile()
+    assert hasattr(service._build_resolver(prof, {"source": "profile"}), "compute")
+    assert hasattr(service._build_resolver(prof, {"source": "server",
+                                                  "url": "http://h:1/"}), "compute")
+    for bad in ({"source": "server"}, {"source": "dll"}, {"source": "exe"},
+                {"source": "store"}, {"source": "bogus"}):
+        with pytest.raises(ValueError):
+            service._build_resolver(prof, bad)
+
+
+def _drain(sub, kinds=("done", "error"), timeout=30):
+    import time
+
+    events = []
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            ev = sub.q.get(timeout=5)
+        except queue.Empty:
+            break
+        events.append(ev)
+        if ev.get("type") in kinds:
+            break
+    return events
+
+
+def test_expert_flash_refuses_real_write_without_optin():
+    """A real (non-sim) backend without the explicit opt-in must refuse before
+    ever opening the bus (so it is safe even with no hardware present)."""
+
+    svc = FlashService(throttle_kbs=0)
+    svc.set_firmware("fw.bin", bytes(0x1000))
+    svc.configure_expert(profile_id="med17_7_5_demo", backend="socketcan:can0",
+                         allow_write=False)
+    assert svc.expert_config()["willWrite"] is False
+    sub = svc.subscribe()
+    assert svc.start_expert_flash() is True
+    events = _drain(sub, kinds=("error", "done"), timeout=6)
+    svc.unsubscribe(sub)
+    errs = [e for e in events if e["type"] == "error"]
+    assert errs and "disabled" in errs[0]["msg"]
+    assert not any(e["type"] == "done" for e in events)
+
+
+def test_expert_flash_simulator_end_to_end():
+    svc = FlashService(throttle_kbs=0)
+    # The 'demo' profile has two tiny regions at 0x80040000 (0x2000) and
+    # 0x80042000 (0x1000); a 0x3000 image anchored at the base covers both.
+    image = bytes([0x60]) + bytes(0x2FFE) + bytes([0xDE])
+    svc.set_firmware("cal.bin", image)
+    cfg = svc.configure_expert(profile_id="med17_7_5_demo", backend="simulator",
+                               seedkey={"source": "profile"})
+    assert cfg["ready"] is True
+    assert cfg["willWrite"] is True          # simulator always "writes"
+    assert len(cfg["regions"]) == 2
+
+    sub = svc.subscribe()
+    assert svc.start_expert_flash() is True
+    events = _drain(sub)
+    svc.unsubscribe(sub)
+
+    kinds = {e["type"] for e in events}
+    assert "done" in kinds, kinds
+    assert "error" not in kinds
+    prog = [e for e in events if e["type"] == "progress"]
+    # sector bars come from the demo profile (two regions), not the C63 demo (four)
+    assert len(prog[-1]["sectors"]) == 2
+
+
+def test_expert_endpoints_over_http():
+    svc = FlashService(throttle_kbs=0)
+    with WebServer(svc, port=0) as srv:
+        host, port = srv.address
+        base = f"http://{host}:{port}"
+
+        def get(path):
+            with urllib.request.urlopen(base + path, timeout=5) as r:
+                return json.loads(r.read())
+
+        def post(path, data, ctype="application/json"):
+            req = urllib.request.Request(base + path, data=data,
+                                         headers={"Content-Type": ctype}, method="POST")
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return json.loads(r.read())
+
+        assert any(p["id"] == "med17_7_5_med1775" for p in get("/api/profiles")["profiles"])
+        assert "simulator" in [b["id"] for b in get("/api/backends")["backends"]]
+
+        up = post("/api/firmware?name=cal.bin", bytes(0x1000), "application/octet-stream")
+        assert up["firmware"]["size"] == 0x1000
+
+        cfg = post("/api/expert/config", json.dumps(
+            {"profileId": "med17_7_5_demo", "backend": "simulator"}).encode())
+        assert cfg["ready"] is True
+        assert get("/api/expert")["profileId"] == "med17_7_5_demo"
+
+
 def test_http_endpoints():
     svc = FlashService(_small_profile(), throttle_kbs=0)
     with WebServer(svc, port=0) as srv:

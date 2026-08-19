@@ -29,6 +29,24 @@ The Python server serves the prebuilt `webui/dist`. After editing the UI, run
 | `GET  /api/flash/stream` | **SSE**: `progress` / `log` / `done` / `error`     |
 | `POST /api/maps/<id>/buy`| simulate a purchase → `{unlocked: true}`           |
 
+**Expert / real flash** (the "Experte · Echt-Flash" panel):
+
+| Method & path              | Purpose                                              |
+|----------------------------|------------------------------------------------------|
+| `GET  /api/profiles`       | bundled ECU profiles (`config/*.yaml`, incl. med1775)|
+| `GET  /api/backends`       | usable CAN transports + seed/key algorithm names     |
+| `GET  /api/expert`         | current expert-flash configuration                   |
+| `POST /api/firmware?name=` | upload a firmware file (raw body: .bin/.hex/.s19)     |
+| `POST /api/expert/config`  | set `{profileId, backend, seedkey, allowWrite}`      |
+| `POST /api/expert/flash`   | start the configured real flash → `{started: bool}`  |
+
+The expert flash reuses the same `/api/flash/stream` SSE and progress display.
+`seedkey` selects the key source: `{source:"profile"}` (algorithm from the
+profile), `{source:"server", url}` (a seed/key server), `{source:"dll"|"exe",
+path, options}` (a vendor J2534 DLL / seed-key exe), or `{source:"store",
+path}` (a JSON catalogue). Writing to a **real** (non-simulator) backend is
+refused unless `allowWrite:true` is set — the simulator always runs.
+
 ### SSE `progress` event
 
 ```jsonc
@@ -50,17 +68,23 @@ The Python server serves the prebuilt `webui/dist`. After editing the UI, run
 `log` events are `{type, cls, msg}` (`cls` ∈ `"" | ok | accent | err`), and the
 stream ends with a `done` (or `error`) event.
 
-## Pointing the flash view at real hardware
+## Flashing a real ECU from the UI
 
-By default the backend flashes the in-process simulator (the design's C63
-profile, `config/med17_7_5_c63.yaml`). To flash a real ECU instead:
+The top **Schreibvorgang** card is the C63 demo (simulated ECU, generated
+image). To flash a **real** file, use the **Experte · Echt-Flash** panel:
 
-* pass your verified profile: `med17flasher webserver --profile my_ecu.yaml`;
-* in `med17flasher/webserver/service.py`, `FlashService` builds a
-  `VirtualCanNetwork` + `VirtualEcu`. Swap `_make_uds` to open a real bus
-  (`create_bus("socketcan:can0")`) and drive a real firmware image instead of
-  the generated demo pattern. Everything above that (SSE, sector mapping,
-  throttling, the whole React UI) stays the same.
+1. pick a **Profil** (e.g. `med17_7_5_med1775` for the real production flow);
+2. pick a **Verbindung** — `Simulator` (safe) or a real adapter
+   (`socketcan:can0`, `pcan:…`, `slcan:…`, …);
+3. upload your **Firmware-Datei** (`.bin` / `.hex` / `.s19`);
+4. choose the **Seed/Key** source (profile algorithm, server URL, vendor DLL/exe
+   path, or a JSON catalogue);
+5. for a real adapter, tick **Schreiben freigeben** and press **Echt flashen**.
+
+Progress streams into the same Schreibvorgang card. Writing to real hardware is
+gated: without the write opt-in the backend refuses before it even opens the
+bus. This is the same engine as `med17flasher flash …` on the CLI — see
+[`MED1775.md`](MED1775.md) and [`SEEDKEY.md`](SEEDKEY.md).
 
 > The purchase flow (`buy_map`) is a stub: it unlocks a map for the VIN after a
 > short delay. Wire it to a real Stripe checkout + entitlement store before

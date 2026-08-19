@@ -10,10 +10,18 @@ API
 ``GET  /api/maps``           OTS maps (with unlocked state)
 ``GET  /api/telemetry``      live board voltage / speed
 ``GET  /api/identify``       identification DIDs (live from the ECU)
-``POST /api/flash``          start a flash            -> {started: bool}
+``POST /api/flash``          start the C63 demo flash -> {started: bool}
 ``POST /api/flash/abort``    abort the running flash
 ``GET  /api/flash/stream``   Server-Sent Events: progress / log / done / error
 ``POST /api/maps/<id>/buy``  simulate a purchase      -> {unlocked: true}
+
+Expert / real flash:
+``GET  /api/profiles``       bundled ECU profiles (incl. med1775)
+``GET  /api/backends``       usable CAN transports + seed/key algorithms
+``GET  /api/expert``         current expert-flash configuration
+``POST /api/firmware?name=`` upload a firmware file (raw body) -> {firmware:…}
+``POST /api/expert/config``  set profile/backend/seedkey/allowWrite
+``POST /api/expert/flash``   start the configured real flash  -> {started: bool}
 """
 
 from __future__ import annotations
@@ -25,7 +33,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from ..logging_setup import get_logger
 from .service import FlashService
@@ -104,6 +112,10 @@ class _Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return {}
 
+    def _read_body(self) -> bytes:
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        return self.rfile.read(length) if length else b""
+
     # -- verbs ---------------------------------------------------------- #
     def do_OPTIONS(self) -> None:  # noqa: N802
         self.send_response(204)
@@ -124,6 +136,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(200, {"dids": self._svc.identify()})
             except Exception as exc:  # noqa: BLE001
                 self._json(500, {"error": str(exc)})
+        elif path == "/api/profiles":
+            self._json(200, {"profiles": self._svc.list_profiles()})
+        elif path == "/api/backends":
+            self._json(200, self._svc.list_backends())
+        elif path == "/api/expert":
+            self._json(200, self._svc.expert_config())
         elif path == "/api/flash/stream":
             self._stream()
         elif path.startswith("/api/"):
@@ -132,7 +150,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._serve_static(path)
 
     def do_POST(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         if path == "/api/flash":
             body = self._read_json()
             started = self._svc.start_flash(body.get("mapId"))
@@ -140,6 +159,32 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/flash/abort":
             self._svc.abort_flash()
             self._json(200, {"aborted": True})
+        elif path == "/api/firmware":
+            name = (parse_qs(parsed.query).get("name") or ["firmware.bin"])[0]
+            data = self._read_body()
+            try:
+                self._json(200, {"firmware": self._svc.set_firmware(name, data)})
+            except Exception as exc:  # noqa: BLE001
+                self._json(400, {"error": str(exc)})
+        elif path == "/api/expert/config":
+            body = self._read_json()
+            try:
+                self._json(200, self._svc.configure_expert(
+                    profile_id=body.get("profileId"),
+                    backend=body.get("backend"),
+                    seedkey=body.get("seedkey"),
+                    allow_write=body.get("allowWrite"),
+                ))
+            except KeyError as exc:
+                self._json(404, {"error": f"unbekanntes Profil: {exc}"})
+            except Exception as exc:  # noqa: BLE001
+                self._json(400, {"error": str(exc)})
+        elif path == "/api/expert/flash":
+            try:
+                started = self._svc.start_expert_flash()
+                self._json(200 if started else 409, {"started": started})
+            except Exception as exc:  # noqa: BLE001
+                self._json(400, {"error": str(exc)})
         elif path.startswith("/api/maps/") and path.endswith("/buy"):
             map_id = path[len("/api/maps/"):-len("/buy")]
             body = self._read_json()

@@ -27,6 +27,28 @@ export const buyMap = (id, addon) =>
     body: JSON.stringify({ addon: !!addon }),
   }).then(json)
 
+/* ---- Expert / real flash ------------------------------------------------ */
+export const getProfiles = () => fetch('/api/profiles').then(json)
+export const getBackends = () => fetch('/api/backends').then(json)
+export const getExpert = () => fetch('/api/expert').then(json)
+
+export const uploadFirmware = (file) =>
+  fetch(`/api/firmware?name=${encodeURIComponent(file.name)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: file, // raw bytes; the backend parses .bin/.hex/.s19
+  }).then(json)
+
+export const setExpertConfig = (cfg) =>
+  fetch('/api/expert/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg),
+  }).then(json)
+
+export const startExpertFlash = () =>
+  fetch('/api/expert/flash', { method: 'POST' }).then((res) => res.json())
+
 /**
  * Subscribe to the flash event stream (SSE).
  * Returns an unsubscribe function.

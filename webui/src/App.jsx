@@ -135,6 +135,7 @@ export default function App() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0 }}>
           <WriteSection flash={flash} p={p} badgeText={badgeText} badgeColor={badgeColor}
             running={running} onAbort={abortFlash} file={vehicle.file} />
+          <ExpertSection running={running} />
           <MapsSection maps={maps} addons={addons} setAddons={setAddons}
             buying={buying} unlocked={unlocked} onBuy={buy} onFlash={startFlash} />
           <LogSection logs={logs} logRef={logRef} autoscroll={autoscroll}
@@ -345,6 +346,181 @@ function MapsSection({ maps, addons, setAddons, buying, unlocked, onBuy, onFlash
             </div>
           )
         })}
+      </div>
+    </section>
+  )
+}
+
+/* ---------------------------------------------------------- ExpertSection */
+const fieldLabel = { fontSize: 12, fontWeight: 600, color: MUTED, marginBottom: 5, display: 'block' }
+const inputStyle = {
+  width: '100%', padding: '9px 11px', borderRadius: 8, border: '1px solid rgba(0,0,0,.14)',
+  background: '#FFFFFF', fontSize: 13, color: '#1D1D1F', fontFamily: 'inherit',
+}
+
+function ExpertSection({ running }) {
+  const [profiles, setProfiles] = useState([])
+  const [backends, setBackends] = useState([])
+  const [form, setForm] = useState({
+    profileId: '', backend: 'simulator', seedSource: 'profile',
+    seedUrl: '', seedPath: '', seedOptions: '', allowWrite: false,
+  })
+  const [fw, setFw] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState(null)
+
+  useEffect(() => {
+    api.getProfiles().then((d) => {
+      const ps = d.profiles || []
+      setProfiles(ps)
+      setForm((f) => ({
+        ...f,
+        profileId: f.profileId || (ps.find((p) => p.id.includes('med1775'))?.id || ps[0]?.id || ''),
+      }))
+    }).catch(() => {})
+    api.getBackends().then((d) => setBackends(d.backends || [])).catch(() => {})
+    api.getExpert().then((c) => { if (c.firmware) setFw(c.firmware) }).catch(() => {})
+  }, [])
+
+  const upd = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+  const backendObj = backends.find((b) => b.id === form.backend)
+  const isReal = backendObj ? backendObj.real : false
+
+  const onUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setBusy(true); setMsg(null)
+    try {
+      const d = await api.uploadFirmware(file)
+      setFw(d.firmware)
+      setMsg({ ok: true, t: `Firmware geladen · ${d.firmware.name} · ${d.firmware.programBytes} Bytes · CRC32 ${d.firmware.crc32}` })
+    } catch {
+      setMsg({ ok: false, t: 'Upload/Parsing fehlgeschlagen — .bin / .hex / .s19 erwartet.' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const seedCfg = () => {
+    const s = form.seedSource
+    if (s === 'server') return { source: 'server', url: form.seedUrl }
+    if (s === 'dll' || s === 'exe') return { source: s, path: form.seedPath, options: form.seedOptions }
+    if (s === 'store') return { source: 'store', path: form.seedPath }
+    return { source: 'profile' }
+  }
+
+  const onFlash = async () => {
+    setBusy(true); setMsg(null)
+    try {
+      await api.setExpertConfig({
+        profileId: form.profileId, backend: form.backend,
+        seedkey: seedCfg(), allowWrite: form.allowWrite,
+      })
+      const r = await api.startExpertFlash()
+      if (r.started) setMsg({ ok: true, t: 'Echt-Flash gestartet — Fortschritt oben im Schreibvorgang.' })
+      else setMsg({ ok: false, t: r.error || 'Es läuft bereits ein Schreibvorgang.' })
+    } catch (err) {
+      setMsg({ ok: false, t: String(err.message || err) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const canFlash = form.profileId && fw && !running && !busy && (!isReal || form.allowWrite)
+  const seedNeedsUrl = form.seedSource === 'server'
+  const seedNeedsPath = ['dll', 'exe', 'store'].includes(form.seedSource)
+
+  return (
+    <section style={cardStyle}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px 0' }}>
+        <span style={{ fontSize: 16, fontWeight: 700 }}>Experte · Echt-Flash</span>
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: FAINT }}>eigene Datei · echte UDS-Sequenz</span>
+      </div>
+      <div style={{ padding: '4px 20px 0', fontSize: 12, color: MUTED }}>
+        Eigene Firmware auf ein gewähltes Profil (z. B. MED17.7.5&nbsp;med1775) flashen — Simulator oder echter CAN-Adapter, mit Seed/Key aus Profil, Server oder DLL.
+      </div>
+      <div style={{ padding: '16px 20px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label style={fieldLabel}>Profil</label>
+            <select style={inputStyle} value={form.profileId} onChange={(e) => upd('profileId', e.target.value)}>
+              {profiles.map((p) => <option key={p.id} value={p.id}>{p.id}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={fieldLabel}>Verbindung</label>
+            <select style={inputStyle} value={form.backend} onChange={(e) => upd('backend', e.target.value)}>
+              {backends.map((b) => (
+                <option key={b.id} value={b.id} disabled={!b.available}>
+                  {b.name}{b.available ? '' : ' (nicht verfügbar)'}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label style={fieldLabel}>Firmware-Datei</label>
+          <input type="file" accept=".bin,.hex,.s19,.srec,.mot" onChange={onUpload}
+            style={{ ...inputStyle, padding: '7px 10px' }} />
+          {fw && (
+            <div style={{ marginTop: 6, fontFamily: MONO, fontSize: 11.5, color: GREEN }}>
+              {fw.name} · {fw.programBytes} B · CRC32 {fw.crc32}
+              {fw.span && <> · {fw.span[0]}–{fw.span[1]}</>}
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: seedNeedsUrl || seedNeedsPath ? '1fr 1fr' : '1fr', gap: 12 }}>
+          <div>
+            <label style={fieldLabel}>Seed/Key</label>
+            <select style={inputStyle} value={form.seedSource} onChange={(e) => upd('seedSource', e.target.value)}>
+              <option value="profile">Aus Profil (Algorithmus)</option>
+              <option value="server">Seed/Key-Server (URL)</option>
+              <option value="dll">Vendor-DLL (J2534)</option>
+              <option value="exe">Seed/Key-EXE</option>
+              <option value="store">Seed/Key-Katalog (JSON)</option>
+            </select>
+          </div>
+          {seedNeedsUrl && (
+            <div>
+              <label style={fieldLabel}>Server-URL</label>
+              <input style={inputStyle} placeholder="http://127.0.0.1:8377"
+                value={form.seedUrl} onChange={(e) => upd('seedUrl', e.target.value)} />
+            </div>
+          )}
+          {seedNeedsPath && (
+            <div>
+              <label style={fieldLabel}>{form.seedSource === 'store' ? 'JSON-Pfad' : 'Pfad zur DLL/EXE'}</label>
+              <input style={inputStyle} placeholder={form.seedSource === 'store' ? 'seedkeys.json' : 'MED1775_12_42_00.dll'}
+                value={form.seedPath} onChange={(e) => upd('seedPath', e.target.value)} />
+            </div>
+          )}
+        </div>
+
+        {isReal && (
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '10px 12px', borderRadius: 9, background: 'rgba(255,122,0,.08)', border: '1px solid rgba(255,122,0,.25)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={form.allowWrite} onChange={(e) => upd('allowWrite', e.target.checked)}
+              style={{ marginTop: 2 }} />
+            <span style={{ fontSize: 12, color: '#8A4B00' }}>
+              <b>Schreiben auf echte Hardware freigeben.</b> Zündung ein, stabile Spannung, korrektes Profil/Datei/Seed-Key. Ein falscher Flash kann das Steuergerät unbrauchbar machen.
+            </span>
+          </label>
+        )}
+
+        {msg && (
+          <div style={{ fontSize: 12, color: msg.ok ? GREEN : '#D70015' }}>{msg.t}</div>
+        )}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button onClick={onFlash} disabled={!canFlash}
+            style={{ padding: '10px 22px', borderRadius: 9, fontSize: 14, fontWeight: 700, color: '#fff', background: canFlash ? ACCENT : 'rgba(0,0,0,.15)', boxShadow: canFlash ? '0 4px 12px -4px rgba(255,122,0,.5)' : 'none' }}>
+            {isReal ? 'Echt flashen' : 'Im Simulator flashen'}
+          </button>
+          <span style={{ fontSize: 11.5, color: FAINT }}>
+            {isReal ? 'Nutzt den echten CAN-Adapter.' : 'Sicher: virtuelle ECU, kein Schreiben auf Hardware.'}
+          </span>
+        </div>
       </div>
     </section>
   )
