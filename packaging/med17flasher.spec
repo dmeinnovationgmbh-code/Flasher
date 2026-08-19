@@ -6,14 +6,21 @@
 # data so the one-file executable serves the UI and loads profiles offline.
 
 import os
+import sys
 
 block_cipher = None
 
 ROOT = os.path.abspath(os.getcwd())
 
+app_icon = None
+_ico = os.path.join(ROOT, "packaging", "icon.ico")
+if sys.platform == "win32" and os.path.isfile(_ico):
+    app_icon = _ico
+
 datas = [
     (os.path.join(ROOT, "webui", "dist"), "webui/dist"),
     (os.path.join(ROOT, "config"), "config"),
+    (os.path.join(ROOT, "packaging", "icon.png"), "."),
 ]
 
 # Optional integrations light up only if installed; don't hard-require them.
@@ -61,5 +68,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon=app_icon,   # Windows .ico when building on win32, else None
 )

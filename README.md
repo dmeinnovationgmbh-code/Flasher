@@ -49,12 +49,19 @@ The GUI needs Tkinter (usually `apt install python3-tk` on Debian/Ubuntu).
 
 The **MED17.7.5 Flash Tool** ships as a single standalone executable (no Python
 or Node needed) that opens the web UI in a window/browser and runs the real
-backend locally.
+backend locally. **See [`docs/INSTALL.md`](docs/INSTALL.md) for step-by-step
+per-OS install instructions.**
 
 * **Download a prebuilt binary** from the repository's **Releases** page
-  (`med17flasher-desktop-windows.exe`, `-macos`, `-linux`). Releases are built
-  automatically from a `v*` tag by `.github/workflows/release.yml` (Windows,
-  macOS and Linux). Download, run, done.
+  (`med17flasher-desktop-windows.exe`, `-macos`, `-linux`) or, on Windows, the
+  classic setup installer `med17flasher-setup-windows.exe` (Start-menu + desktop
+  shortcut). Releases are built automatically from a `v*` tag by
+  `.github/workflows/release.yml`; every dev-branch push also uploads the same
+  binaries as **Actions artifacts**. Download, run, done.
+* **Windows:** run the `.exe` (SmartScreen → *More info → Run anyway*) or the setup installer.
+* **macOS:** `chmod +x` then right-click → **Open** (Gatekeeper, first launch only).
+* **Linux:** `chmod +x ./med17flasher-desktop-linux && ./med17flasher-desktop-linux`,
+  or `sh packaging/install_linux.sh ./med17flasher-desktop-linux` to add it to your app menu.
 * **Run from source:** `pip install -e . && med17flasher desktop`
 * **Build the binary yourself:** `make desktop`  (→ `dist/med17flasher-desktop`)
 

@@ -52,10 +52,37 @@ jobs:
           name: ${{ matrix.asset }}
           path: dist/${{ matrix.asset }}
 
-      - name: Attach to release
+      # Windows: also wrap the .exe in a classic Inno Setup installer with
+      # Start-menu + desktop shortcuts, so users can "install" it the usual way.
+      - name: Build Windows installer (Inno Setup)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # PyInstaller wrote dist/med17flasher-desktop.exe -> put it back under
+          # the name the .iss expects, then compile the installer.
+          Copy-Item "dist/${{ matrix.asset }}" "dist/med17flasher-desktop.exe" -Force
+          $ver = "${{ github.ref_name }}" -replace '^v',''
+          if ([string]::IsNullOrWhiteSpace($ver) -or $ver -notmatch '^\d') { $ver = "1.0.0" }
+          choco install innosetup --no-progress -y
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=$ver packaging\windows_installer.iss
+      - name: Upload Windows installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: med17flasher-setup-windows
+          path: dist/installer/med17flasher-setup.exe
+
+      - name: Attach binary to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/${{ matrix.asset }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Attach Windows installer to release
+        if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/installer/med17flasher-setup.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
