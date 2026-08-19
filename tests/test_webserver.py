@@ -95,6 +95,45 @@ def test_live_flash_stream(service):
     assert all("fill" in s for s in progress[-1]["sectors"])
 
 
+def test_service_starts_when_yaml_profile_cannot_be_loaded(monkeypatch):
+    """Frozen desktop builds may bundle a *.yaml profile but no PyYAML.
+
+    load_profile() then raises; the service must fall back to the built-in
+    profile instead of crashing the app at startup (the "black window flashes
+    and closes" bug on Windows).
+    """
+
+    import med17flasher.webserver.service as svc_mod
+
+    def boom(*_a, **_k):
+        raise RuntimeError("PyYAML is required to read YAML profiles")
+
+    monkeypatch.setattr(svc_mod, "load_profile", boom)
+    # Must not raise, and must come up with a usable profile.
+    service = FlashService()
+    names = [r.name for r in service.profile.memory_map]
+    assert names == ["CBOOT", "ASW", "CAL"]
+
+
+def test_builtin_profile_is_self_contained():
+    from med17flasher.webserver.service import _builtin_c63_profile
+
+    prof = _builtin_c63_profile()
+    assert prof.security.request_seed_level == 0x11
+    assert [r.name for r in prof.memory_map] == ["CBOOT", "ASW", "CAL"]
+
+
+def test_desktop_main_keeps_console_on_startup_error(monkeypatch):
+    """A startup crash must be reported and return 1, never propagate (which
+    would just close the console window)."""
+
+    import med17flasher.desktop as desktop
+
+    monkeypatch.setattr(desktop, "_run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    # input() on the error path hits EOF under pytest and is swallowed.
+    assert desktop.main([]) == 1
+
+
 def test_http_endpoints():
     svc = FlashService(_small_profile(), throttle_kbs=0)
     with WebServer(svc, port=0) as srv:

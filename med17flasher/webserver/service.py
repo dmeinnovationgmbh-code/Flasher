@@ -414,8 +414,26 @@ def _default_profile_path() -> Optional[str]:
 def _load_default_profile() -> EcuProfile:
     path = _default_profile_path()
     if path:
-        return load_profile(path)
-    # Fallback (e.g. bundle without the config): a C63-shaped built-in profile.
+        try:
+            return load_profile(path)
+        except Exception as exc:  # noqa: BLE001
+            # The most common cause in a frozen build is a bundled *.yaml
+            # profile with no PyYAML available. Never let that crash startup -
+            # fall back to the equivalent built-in profile so the app still runs.
+            log.warning(
+                "could not load bundled profile %s (%s); using the built-in "
+                "C63 profile instead", path, exc,
+            )
+    return _builtin_c63_profile()
+
+
+def _builtin_c63_profile() -> EcuProfile:
+    """A C63-shaped profile baked into code (no YAML/JSON needed).
+
+    Used when no profile file is present, or when a bundled YAML profile cannot
+    be parsed (e.g. a PyInstaller build without PyYAML).
+    """
+
     from ..core.ecu_profile import (
         CanConfig,
         MemoryRegion,

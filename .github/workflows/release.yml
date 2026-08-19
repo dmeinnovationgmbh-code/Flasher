@@ -35,7 +35,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install build deps
-        run: python -m pip install --upgrade pip pyinstaller && pip install -e .
+        # Install PyYAML too so the bundled *.yaml ECU profiles load in the
+        # frozen app (the desktop app reads config/med17_7_5_c63.yaml at start).
+        run: python -m pip install --upgrade pip pyinstaller && pip install -e ".[yaml]"
 
       - name: Build desktop binary
         run: pyinstaller --clean --noconfirm packaging/med17flasher.spec
