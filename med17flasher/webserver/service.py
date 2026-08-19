@@ -32,7 +32,7 @@ from ..core import (
     load_firmware,
     load_profile,
 )
-from ..core.can_backends import available_backends
+from ..core.can_backends import available_backends, list_j2534_devices
 from ..core.ecu_profile import EcuProfile
 from ..core.firmware import FirmwareImage
 from ..core.flash_sequence import (
@@ -477,6 +477,27 @@ class FlashService:
         avail = available_backends()
         backends = [{"id": "simulator", "name": "Simulator (virtuelle ECU)",
                      "available": True, "real": False}]
+
+        # Installed J2534 interfaces first: on Windows that is what is actually
+        # plugged in (Tactrix Openport, Mongoose, ...), listed by real name.
+        devices = list_j2534_devices()
+        for device in devices:
+            name = str(device.get("name") or "J2534")
+            backends.append({
+                "id": f"j2534:{name}",
+                "name": f"{name} (J2534)",
+                "available": bool(device.get("installed")),
+                "real": True,
+            })
+        if not devices:
+            # Keep the entry visible so the user sees the option exists and why
+            # it is greyed out, instead of wondering where their tool went.
+            backends.append({
+                "id": "j2534",
+                "name": "J2534 PassThru (kein Interface installiert)",
+                "available": False, "real": True,
+            })
+
         backends.append({"id": "socketcan:can0", "name": "SocketCAN · can0",
                          "available": bool(avail.get("socketcan")), "real": True})
         for spec, nm in (("pcan:PCAN_USBBUS1", "PEAK PCAN-USB"),

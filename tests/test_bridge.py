@@ -165,7 +165,7 @@ def test_bridge_reports_dll_errors_from_the_child(mock_dll):
     with SeedKeyBridge(mock_dll, python32=sys.executable) as b:
         b.compute("MED17.7.5", 0x05, bytes.fromhex("11223344"))  # start the child
         with pytest.raises(SeedKeyError):
-            b._request({"cmd": "key", "level": 5, "seed": "not-hex"})
+            b.request({"cmd": "key", "level": 5, "seed": "not-hex"})
         # still usable afterwards
         assert b.compute("MED17.7.5", 0x05, bytes.fromhex("11223344")) == expected_key("11223344")
 

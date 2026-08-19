@@ -33,6 +33,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from typing import Optional
 
 from . import __version__
@@ -1083,13 +1084,75 @@ def cmd_simulator(args) -> int:
 
 
 def cmd_backends(args) -> int:
+    from .core.can_backends import list_j2534_devices
+
     print("CAN backends:")
     for name, ok in available_backends().items():
         print(f"  {'[x]' if ok else '[ ]'} {name}")
+
+    devices = list_j2534_devices()
+    print("\nJ2534 PassThru interfaces:")
+    if devices:
+        for device in devices:
+            mark = "[x]" if device.get("installed") else "[!]"
+            print(f"  {mark} {device.get('name')}"
+                  + (f" ({device['vendor']})" if device.get("vendor") else ""))
+            print(f"      {device.get('library')}")
+            if device.get("protocols"):
+                print(f"      protocols: {', '.join(device['protocols'])}")
+            if not device.get("installed"):
+                print("      driver DLL missing - reinstall the vendor package")
+    else:
+        print("  (none registered)"
+              + ("" if sys.platform == "win32" else " - J2534 drivers are Windows-only"))
+
     print("\nSeed/key algorithms:")
     for algo in list_algorithms():
         print(f"  - {algo}")
     return 0
+
+
+def cmd_j2534(args) -> int:
+    """Open the interface and report what it says - the pre-flight check."""
+
+    from .core.j2534 import open_j2534
+
+    try:
+        bus = open_j2534(args.device or "", baudrate=args.baudrate,
+                         extended=args.extended)
+    except Exception as exc:  # noqa: BLE001
+        print(f"cannot open J2534 interface: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        print(f"interface : {bus.name}")
+        info = getattr(bus, "info", None) or {}
+        if not info and hasattr(bus, "read_version"):
+            info = bus.read_version()
+        for key in ("firmware", "dll", "api", "python", "bits"):
+            if info.get(key):
+                print(f"{key:<10}: {info[key]}")
+        battery = bus.battery_voltage() if hasattr(bus, "battery_voltage") else None
+        if battery is not None:
+            print(f"battery   : {battery:.2f} V"
+                  + ("  ** too low to flash safely **" if battery < 12.0 else ""))
+        if args.listen:
+            print(f"\nlistening {args.listen:g}s for CAN traffic ...")
+            deadline = time.monotonic() + args.listen
+            seen: dict = {}
+            while time.monotonic() < deadline:
+                frame = bus.recv(timeout=0.2)
+                if frame is not None:
+                    seen[frame.arbitration_id] = seen.get(frame.arbitration_id, 0) + 1
+            if seen:
+                print(f"{sum(seen.values())} frames, {len(seen)} ids:")
+                for arb, count in sorted(seen.items()):
+                    print(f"  0x{arb:03X}  x{count}")
+            else:
+                print("no traffic - check ignition, the OBD cable and the bit rate")
+        return 0
+    finally:
+        bus.close()
 
 
 def cmd_profile(args) -> int:
@@ -1428,6 +1491,17 @@ def build_parser() -> argparse.ArgumentParser:
     # backends
     p = sub.add_parser("backends", help="list CAN backends and algorithms")
     p.set_defaults(func=cmd_backends)
+
+    # j2534
+    p = sub.add_parser("j2534",
+                       help="check a J2534 interface (Tactrix Openport, ...)")
+    p.add_argument("--device", default="",
+                   help="name substring ('tactrix') or a path to the PassThru DLL")
+    p.add_argument("--baudrate", type=int, default=500000)
+    p.add_argument("--extended", action="store_true", help="enable 29-bit ids")
+    p.add_argument("--listen", type=float, default=0.0, metavar="SECONDS",
+                   help="passively count CAN traffic to prove the wiring works")
+    p.set_defaults(func=cmd_j2534)
 
     # profile
     p = sub.add_parser("profile", help="print an ECU profile as JSON")

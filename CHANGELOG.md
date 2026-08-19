@@ -6,7 +6,42 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- **J2534 PassThru CAN backend** — support for the interfaces professional
+  flashing actually uses (**Tactrix Openport 2.0**, Mongoose, VCX, …). Until now
+  the only real transports were SocketCAN and whatever `python-can` covers, and
+  `python-can` does not speak J2534, so a Tactrix could not reach the bus at
+  all. Includes Windows registry discovery (both 32- and 64-bit views), raw-CAN
+  channel setup with the mandatory pass-all filter, transmit-echo suppression,
+  batched reads, and interface/battery-voltage readout. See
+  [`docs/J2534.md`](docs/J2534.md).
+- **32-bit J2534 bridge** — vendor PassThru DLLs are 32-bit (`op20pt32.dll`) and
+  cannot be loaded by the 64-bit desktop build. `open_j2534()` now detects that
+  loader error and transparently runs the driver in a 32-bit helper process,
+  relaying frames over a line-JSON pipe.
+- `med17flasher j2534` — pre-flight check: opens the interface, prints
+  firmware/DLL/API versions and **battery voltage** (a brown-out mid-erase
+  bricks a MED17), and `--listen N` counts live bus traffic to tell a wiring
+  problem from an ECU problem. `med17flasher backends` now lists installed
+  PassThru interfaces by name.
+- The app's transport dropdown lists installed J2534 interfaces by their real
+  name; when none is installed the entry stays visible but disabled.
+
+### Changed
+- The 32-bit helper-process machinery (interpreter discovery, spawning, the
+  line-JSON exchange) moved into `core/procbridge.py` and is now shared by the
+  seed/key and J2534 bridges instead of being duplicated. `SeedKeyBridge._request`
+  is now the public `request()`.
+- The frozen build ships a plain-source copy of the package (`bridge_src/`) so
+  the 32-bit helper can import it — previously the bridges only worked from a
+  source checkout, never from an installed desktop build.
+
+### Testing
+- `tests/test_j2534.py` compiles a **mock PassThru driver in C** and exercises
+  the real ctypes layer against it (struct layout, big-endian id encoding, echo
+  suppression, filters, batching, teardown, the bridge), finishing with a
+  **complete UDS flash** — security access, erase, transfer, CRC verify —
+  carried through the J2534 backend into the ECU simulator.
 
 ## [1.0.0] - 2026-08-19
 

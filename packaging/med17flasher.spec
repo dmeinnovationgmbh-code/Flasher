@@ -21,6 +21,12 @@ datas = [
     (os.path.join(ROOT, "webui", "dist"), "webui/dist"),
     (os.path.join(ROOT, "config"), "config"),
     (os.path.join(ROOT, "packaging", "icon.png"), "."),
+    # A plain-source copy of the package for the 32-bit helper processes.
+    # Vendor seed/key DLLs and J2534 PassThru drivers (Tactrix's op20pt32.dll)
+    # are 32-bit, so this 64-bit build drives them through a separate 32-bit
+    # Python - which cannot import out of PyInstaller's archive and needs real
+    # .py files. Path must match core.procbridge.BRIDGE_SRC_DIR.
+    (os.path.join(ROOT, "med17flasher"), "bridge_src/med17flasher"),
 ]
 binaries = []
 

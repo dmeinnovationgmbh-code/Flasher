@@ -21,7 +21,7 @@ any hardware.
 
 | Layer | What it does |
 |-------|--------------|
-| **CAN backends** | Virtual (in-process), native SocketCAN, and `python-can` (PCAN, Vector, Kvaser, slcan, …) behind one interface |
+| **CAN backends** | **J2534 PassThru** (Tactrix Openport 2.0, Mongoose, VCX — incl. a 32-bit-DLL bridge), virtual (in-process), native SocketCAN, and `python-can` (PCAN, Vector, Kvaser, slcan, …) behind one interface |
 | **ISO-TP** | Full ISO 15765-2: SF/FF/CF/FC, block size & STmin, padding, 32-bit escape frames, extended addressing |
 | **UDS client** | Sessions, ECU reset, Security Access, Routine Control, Request/Transfer Download, Read/Write DID & memory, TesterPresent keep-alive, `responsePending` (0x78) handling |
 | **Flash sequence** | Session → preconditions → programming session → seed/key → per-block erase/download/transfer/verify → dependencies → reset, with progress + abort |
@@ -91,7 +91,7 @@ med17flasher gui
 
 ```bash
 med17flasher flash \
-    --backend socketcan:can0 \        # or pcan:PCAN_USBBUS1, slcan:/dev/ttyUSB0, ...
+    --backend j2534 \                 # or socketcan:can0, pcan:PCAN_USBBUS1, slcan:/dev/ttyUSB0, ...
     --profile my_ecu.yaml \           # your verified addresses/routines/security
     --seedkey-store my_seedkeys.json \# your ECU's seed/key algorithm + constants
     firmware.bin
@@ -122,7 +122,8 @@ med17flasher extract-calibration  slice a flashable calibration from a full read
 med17flasher ingest         scan a folder (_input/) and auto-process files
 med17flasher fileserver     run the firmware file server
 med17flasher simulator      run a stand-alone virtual MED17.7.5
-med17flasher backends       list usable CAN backends and seed/key algorithms
+med17flasher backends       list usable CAN backends, J2534 interfaces and seed/key algorithms
+med17flasher j2534          check a J2534 interface (versions, battery, --listen for live traffic)
 med17flasher profile        print an ECU profile as JSON
 med17flasher gui            launch the Tkinter desktop GUI
 med17flasher webserver      serve the React web UI + JSON/SSE API (--open)
@@ -199,8 +200,9 @@ tests/         pytest suite (unit + end-to-end against the simulator)
 docs/          ARCHITECTURE, FLASH_SEQUENCE, SEEDKEY, SAFETY
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the layers fit
-together, and [`docs/MED1775.md`](docs/MED1775.md) for a real MED17.7.5
+See [`docs/J2534.md`](docs/J2534.md) for connecting a Tactrix Openport (or any
+other PassThru interface), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how
+the layers fit together, and [`docs/MED1775.md`](docs/MED1775.md) for a real MED17.7.5
 calibration-flash flow (security level 0x05/0x06, whole-flash erase, fingerprint
 writes, gateway unlock) driven by a vendor **seed/key DLL**.
 

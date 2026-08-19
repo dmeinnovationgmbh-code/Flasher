@@ -44,6 +44,43 @@ Sources: ISO 14229-1/-2:2013; pylessard/python-udsoncan (ISO-conformant
 open-source); py-uds docs. The `0xFF00`/`0xFF01` reservations are ISO Annex
 facts; the `0x0202` checkMemory RID is a VAG convention (secondary sources).
 
+## J2534 PassThru (SAE J2534-1, API 04.04)
+
+The vendor-DLL interface every professional tool uses — see
+[`J2534.md`](J2534.md) for the practical side; this is what the code relies on.
+
+- **`PASSTHRU_MSG`** = `ProtocolID | RxStatus | TxFlags | Timestamp | DataSize |
+  ExtraDataIndex | Data[4128]`. All six header fields are Win32 `unsigned long`
+  = **32 bits**, in a 64-bit process too (LLP64). We spell them `c_uint32` in
+  `core/j2534.py`; `c_ulong` would be 64-bit on Linux and shift every field.
+- **A CAN message carries its id in the first 4 bytes of `Data`, big-endian**,
+  payload after it, so `DataSize = 4 + len(payload)`. It is *not* a struct
+  field — this is the most common J2534 mistake.
+- **A connected channel receives nothing until a filter exists.** At least one
+  `PASS_FILTER` is required; matching is `(id & mask) == (pattern & mask)`, so
+  mask `0` passes everything. Filter width follows the mask/pattern message's
+  `CAN_29BIT_ID` flag, hence one filter per id width.
+- **`RxStatus` bit0 `TX_MSG_TYPE`** marks the device's own transmit echo; bit8
+  `CAN_29BIT_ID` marks an extended id. We drop echoes so ISO-TP never reads its
+  own frames as responses.
+- `PassThruReadMsgs` answers **`ERR_BUFFER_EMPTY` (0x10)** — some drivers
+  `ERR_TIMEOUT` (0x09) — when nothing arrived; both are normal, not failures,
+  and `pNumMsgs` still reports what was read.
+- `PassThruIoctl(READ_VBATT)` returns **millivolts** at pin 16.
+- **Registration**: `HKLM\SOFTWARE\PassThruSupport.04.04\<device>` with `Name`,
+  `Vendor`, `FunctionLibrary` and per-protocol DWORDs. Most vendor drivers are
+  32-bit and register only in the 32-bit registry view, so a 64-bit process must
+  read **both** views explicitly.
+
+We connect with `ProtocolID = CAN` (raw), not `ISO15765`, so our own tested
+ISO-TP layer keeps ownership of segmentation and timing across every backend.
+
+Sources: SAE J2534-1 (API 04.04) interface definition; the header layout and
+error codes as published in open J2534 wrappers (e.g. jazdw/rp1210a-j2534,
+python `j2534` bindings). Device-specific behaviour is **unverified here** — no
+PassThru hardware was available; the backend is tested against a compiled mock
+driver, see `tests/test_j2534.py`.
+
 ## XCP (ASAM MCD-1 XCP) on CAN
 
 `CONNECT` response: `0xFF | RESOURCE | COMM_MODE_BASIC | MAX_CTO | MAX_DTO(2) |

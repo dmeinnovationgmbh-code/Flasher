@@ -351,6 +351,19 @@ def create_bus(spec: str, **kwargs: object) -> CanBus:
     if backend in ("socketcan-native", "rawcan"):
         return SocketCanBus(channel=target or "can0")
 
+    # J2534 PassThru: the interface most professional tools use (Tactrix
+    # Openport, Mongoose, VCX, ...). python-can cannot do this, so it has its
+    # own backend, including the 32-bit helper for a 64-bit build.
+    if backend in ("j2534", "passthru"):
+        from .j2534 import open_j2534
+
+        return open_j2534(target, **kwargs)  # type: ignore[arg-type]
+
+    if backend in ("tactrix", "openport"):
+        from .j2534 import open_j2534
+
+        return open_j2534(target or "openport", **kwargs)  # type: ignore[arg-type]
+
     # Everything else is delegated to python-can, mapping the prefix to its
     # interface name.
     interface_map = {
@@ -388,4 +401,22 @@ def available_backends() -> Dict[str, bool]:
         result["python-can"] = True
     except ImportError:
         result["python-can"] = False
+    try:
+        from .j2534 import available as _j2534_available
+
+        result["j2534"] = _j2534_available()
+    except Exception:  # noqa: BLE001 - never let discovery break the listing
+        result["j2534"] = False
     return result
+
+
+def list_j2534_devices() -> List[Dict[str, object]]:
+    """Installed J2534 PassThru interfaces, as plain dicts for the UI/CLI."""
+
+    try:
+        from .j2534 import list_devices
+
+        return [d.as_dict() for d in list_devices()]
+    except Exception as exc:  # noqa: BLE001
+        log.debug("J2534 discovery failed: %s", exc)
+        return []
