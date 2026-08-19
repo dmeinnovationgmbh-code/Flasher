@@ -32,6 +32,9 @@ class UdsTiming:
     p2: float = 1.0  # normal response time
     p2_star: float = 5.0  # extended time granted after a 0x78 response
     max_pending: int = 30  # cap on consecutive 0x78 responses before giving up
+    busy_retries: int = 3  # retries on transient NRCs (0x21 busy / 0x37 delay)
+    busy_delay: float = 0.1  # wait before retrying a busyRepeatRequest (0x21)
+    delay_not_expired_wait: float = 0.5  # wait before retrying a 0x37
 
 
 class UdsClient:
@@ -69,10 +72,9 @@ class UdsClient:
         p2_star = p2_star if p2_star is not None else self.timing.p2_star
 
         with self._io_lock:
-            self.tp.bus.flush_rx()
-            self.tp.send(payload)
-
             if not expect_response or suppress_positive:
+                self.tp.bus.flush_rx()
+                self.tp.send(payload)
                 # Still watch briefly for a negative response, which a server
                 # may send even when a positive one was suppressed.
                 try:
@@ -83,25 +85,47 @@ class UdsClient:
                     return b""
                 return self._interpret(sid, response, allow_empty=True)
 
-            pending = 0
-            timeout = p2
+            attempt = 0
             while True:
-                try:
-                    response = self.tp.recv(timeout=timeout)
-                except Exception as exc:  # isotp timeout / framing
-                    raise UdsTimeoutError(
-                        f"no response to service 0x{sid:02X}: {exc}"
-                    ) from exc
+                self.tp.bus.flush_rx()
+                self.tp.send(payload)
 
-                if self._is_response_pending(sid, response):
-                    pending += 1
-                    if pending > self.timing.max_pending:
+                pending = 0
+                timeout = p2
+                while True:
+                    try:
+                        response = self.tp.recv(timeout=timeout)
+                    except Exception as exc:  # isotp timeout / framing
                         raise UdsTimeoutError(
-                            f"ECU kept responding 'pending' (0x78) more than "
-                            f"{self.timing.max_pending} times for service 0x{sid:02X}"
-                        )
-                    log.debug("responsePending (%d) for service 0x%02X", pending, sid)
-                    timeout = p2_star
+                            f"no response to service 0x{sid:02X}: {exc}"
+                        ) from exc
+
+                    if self._is_response_pending(sid, response):
+                        pending += 1
+                        if pending > self.timing.max_pending:
+                            raise UdsTimeoutError(
+                                f"ECU kept responding 'pending' (0x78) more than "
+                                f"{self.timing.max_pending} times for service 0x{sid:02X}"
+                            )
+                        log.debug("responsePending (%d) for service 0x%02X", pending, sid)
+                        timeout = p2_star
+                        continue
+                    break
+
+                # Retry transient negative responses (busy / time-delay) instead
+                # of failing the whole flash on a momentary ECU condition.
+                nrc = self._negative_nrc(sid, response)
+                if nrc in (int(C.NRC.BUSY_REPEAT_REQUEST), int(C.NRC.REQUIRED_TIME_DELAY_NOT_EXPIRED)) \
+                        and attempt < self.timing.busy_retries:
+                    attempt += 1
+                    wait = (
+                        self.timing.busy_delay
+                        if nrc == int(C.NRC.BUSY_REPEAT_REQUEST)
+                        else self.timing.delay_not_expired_wait
+                    )
+                    log.debug("transient NRC 0x%02X on 0x%02X, retry %d after %.2fs",
+                              nrc, sid, attempt, wait)
+                    time.sleep(wait)
                     continue
 
                 return self._interpret(sid, response)
@@ -134,6 +158,14 @@ class UdsClient:
             and response[1] == sid
             and response[2] == C.RESPONSE_PENDING
         )
+
+    @staticmethod
+    def _negative_nrc(sid: int, response: bytes) -> Optional[int]:
+        """Return the NRC byte if ``response`` is a negative response to ``sid``."""
+
+        if len(response) >= 3 and response[0] == C.NEGATIVE_RESPONSE_SID and response[1] == sid:
+            return response[2]
+        return None
 
     # ------------------------------------------------------------------ #
     # 0x10 DiagnosticSessionControl

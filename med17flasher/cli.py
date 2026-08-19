@@ -8,6 +8,9 @@ list of sub-commands:
 * ``read``           - read a memory range to a file
 * ``seedkey``        - compute a key from a seed on the command line
 * ``seedkey-solve``  - recover a seed/key algorithm from captured seed/key pairs
+* ``analyze-trace``  - derive an ECU profile + seed/key pairs from a CAN trace
+* ``analyze-firmware`` - detect program regions in a firmware dump
+* ``ingest``         - scan a folder (default ``_input/``) and auto-process files
 * ``seedkey-server`` - run the seed/key network server
 * ``fileserver``     - run the firmware file server
 * ``simulator``      - run a stand-alone virtual MED17.7.5
@@ -20,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import threading
 from typing import Optional
@@ -269,9 +273,18 @@ def cmd_seedkey_solve(args) -> int:
     full = [r for r in results if r.is_full_match]
     for r in results[:10]:
         print(f"  {r}")
+    # Ambiguity guard: a single pair (or too few) is trivially matched by the
+    # linear families (xor/add/sum), which masks the true algorithm.
+    if len(pairs) < 2:
+        print("\nWARNING: only one pair - xor/add/sum match ANY single pair "
+              "trivially. Capture more pairs with DIFFERENT seeds to disambiguate.")
+    elif len(full) > 1:
+        print(f"\nWARNING: {len(full)} algorithms reproduce all pairs "
+              f"({', '.join(r.algorithm for r in full)}). Capture more pairs "
+              f"with different seeds to disambiguate.")
     if full:
         best = full[0]
-        print("\nRECOVERED:")
+        print("\nRECOVERED (best candidate):" if len(full) > 1 else "\nRECOVERED:")
         print(f"  algorithm = {best.algorithm}")
         print(f"  params    = {best.params}")
         print(f"  level     = 0x{best.level:X}")
@@ -289,6 +302,163 @@ def cmd_seedkey_solve(args) -> int:
         return 0
     print("\nNo full match - best candidate above is partial.")
     return 1
+
+
+def cmd_analyze_trace(args) -> int:
+    import json as _json
+
+    from .core.trace import analyze, read_trace
+
+    frames = read_trace(args.trace)
+    if not frames:
+        print(f"no CAN frames parsed from {args.trace!r}", file=sys.stderr)
+        return 1
+    report = analyze(frames, tx_id=args.tx, rx_id=args.rx)
+    print(f"Trace {args.trace}: {len(frames)} frames, "
+          f"{report.request_count} requests / {report.response_count} responses")
+    print(f"  sessions       : {[hex(s) for s in report.sessions]}")
+    print(f"  security levels: {[hex(l) for l in report.security_levels]}")
+    print(f"  seed/key pairs : {len(report.seed_key_pairs)}")
+    for level, seed, key in report.seed_key_pairs:
+        print(f"      level 0x{level:02X}: seed={seed.hex()} key={key.hex()}")
+    print(f"  erase routine  : {hex(report.erase_routine) if report.erase_routine else '-'}")
+    print(f"  checkMemory    : {hex(report.check_memory_routine) if report.check_memory_routine else '-'}")
+    print(f"  download blocks: {len(report.download_blocks)}")
+    for b in report.download_blocks:
+        print(f"      0x{b.address:08X}  {b.size} bytes  ({b.transfers} transfers)")
+    if report.dids:
+        print(f"  DIDs read      : {[hex(d) for d in report.dids]}")
+
+    if args.emit_profile:
+        profile = report.to_profile()
+        _dump_profile(profile, args.emit_profile)
+        print(f"  wrote profile -> {args.emit_profile}")
+    if args.emit_pairs and report.seed_key_pairs:
+        with open(args.emit_pairs, "w", encoding="utf-8") as fh:
+            for level, seed, key in report.seed_key_pairs:
+                fh.write(f"{seed.hex()} {key.hex()}\n")
+        print(f"  wrote seed/key pairs -> {args.emit_pairs}")
+        # opportunistically try to recover the algorithm, but only claim it
+        # when it is unambiguous (>=2 pairs with distinct seeds, one full match).
+        try:
+            from .seedkey import SeedKeySolver
+
+            solver_pairs = report.seed_key_pairs_for_solver()
+            distinct_seeds = {p.seed for p in solver_pairs}
+            levels = {lvl for lvl, _s, _k in report.seed_key_pairs}
+            level = next(iter(levels)) if len(levels) == 1 else 0
+            results = SeedKeySolver(solver_pairs).solve(level=level)
+            full = [r for r in results if r.is_full_match]
+            if len(distinct_seeds) >= 2 and len(full) == 1:
+                print(f"  seed/key recovered: {full[0].algorithm} {full[0].params}")
+            elif solver_pairs:
+                print(f"  {len(solver_pairs)} seed/key pair(s) extracted; capture a "
+                      f"few more (different seeds) then run: med17flasher seedkey-solve "
+                      f"--pairs {args.emit_pairs}")
+        except Exception:  # noqa: BLE001
+            pass
+    return 0
+
+
+def cmd_analyze_firmware(args) -> int:
+    from .core import detect_regions, load_firmware
+
+    image = load_firmware(args.firmware, base_address=args.base)
+    low, high = image.span
+    print(f"Firmware {args.firmware}: {image.total_size} bytes, "
+          f"span 0x{low:08X}..0x{high:08X}, {len(image.segments)} segment(s)")
+    regions = detect_regions(image, min_gap=args.min_gap, align=args.align)
+    print(f"Detected {len(regions)} region(s):")
+    for i, (start, size) in enumerate(regions, 1):
+        print(f"  BLOCK{i}: 0x{start:08X}  {size} bytes (0x{size:X})")
+    print(f"Whole-image CRC32: 0x{image.checksum('crc32'):08X}")
+
+    if args.emit_profile:
+        from .core.ecu_profile import MemoryRegion, builtin_med17_7_5
+
+        profile = builtin_med17_7_5()
+        profile.memory_map = [
+            MemoryRegion(f"BLOCK{i}", start, size, checksum="crc32")
+            for i, (start, size) in enumerate(regions, 1)
+        ]
+        profile.description = f"Derived from firmware dump {os.path.basename(args.firmware)}"
+        _dump_profile(profile, args.emit_profile)
+        print(f"wrote profile -> {args.emit_profile}")
+    return 0
+
+
+def cmd_ingest(args) -> int:
+    """Scan a folder and auto-process firmware / traces / seed-key pair files."""
+
+    root = args.dir
+    if not os.path.isdir(root):
+        print(f"no such directory: {root}", file=sys.stderr)
+        return 2
+    entries = sorted(os.listdir(root))
+    if not entries:
+        print(f"{root} is empty - drop firmware (.bin/.hex/.s19), CAN traces "
+              f"(.log/.asc/.csv) or seed/key pair files (.txt/.json) there.")
+        return 0
+
+    fw_ext = {".bin", ".hex", ".ihex", ".s19", ".srec", ".mot", ".frf", ".odx"}
+    trace_ext = {".log", ".asc", ".trc", ".candump"}
+    handled = 0
+    for name in entries:
+        path = os.path.join(root, name)
+        if not os.path.isfile(path):
+            continue
+        ext = os.path.splitext(name)[1].lower()
+        stem = os.path.splitext(name)[0]
+        print(f"\n=== {name} ===")
+        try:
+            if ext in trace_ext or (ext == ".csv"):
+                ns = argparse.Namespace(
+                    trace=path, tx=args.tx, rx=args.rx,
+                    emit_profile=os.path.join(root, f"{stem}.profile.yaml"),
+                    emit_pairs=os.path.join(root, f"{stem}.pairs.txt"),
+                )
+                cmd_analyze_trace(ns)
+            elif ext in fw_ext:
+                ns = argparse.Namespace(
+                    firmware=path, base=args.base, min_gap=0x1000, align=0x100,
+                    emit_profile=os.path.join(root, f"{stem}.profile.yaml"),
+                )
+                cmd_analyze_firmware(ns)
+                handled += 1
+            elif ext in (".txt", ".json"):
+                from .seedkey import SeedKeySolver, load_pairs
+
+                pairs = load_pairs(path)
+                if pairs:
+                    best = SeedKeySolver(pairs).best(level=args.level)
+                    if best and best.is_full_match:
+                        print(f"  recovered seed/key: {best.algorithm} {best.params}")
+                    else:
+                        print(f"  {len(pairs)} pair(s) loaded; no full match "
+                              f"(try --wordlist with seedkey-solve)")
+            else:
+                print("  (skipped: unrecognised file type)")
+                continue
+            handled += 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"  error: {exc}")
+    print(f"\nIngest complete: {handled} file(s) processed. "
+          f"Review the generated *.profile.yaml before flashing real hardware.")
+    return 0
+
+
+def _dump_profile(profile, path: str) -> None:
+    data = profile.to_dict()
+    try:
+        import yaml  # type: ignore
+
+        with open(path, "w", encoding="utf-8") as fh:
+            yaml.safe_dump(data, fh, sort_keys=False)
+    except ImportError:
+        import json as _json
+
+        with open(path, "w", encoding="utf-8") as fh:
+            _json.dump(data, fh, indent=2, default=str)
 
 
 def cmd_seedkey_server(args) -> int:
@@ -453,6 +623,35 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ecu", default="MED17.7.5")
     p.add_argument("--emit-store", help="write a seed/key store JSON for a full match")
     p.set_defaults(func=cmd_seedkey_solve)
+
+    # analyze-trace
+    p = sub.add_parser("analyze-trace", help="derive a profile + seed/key pairs from a CAN trace")
+    p.add_argument("trace", help="CAN log (candump/.log, Vector .asc, or .csv)")
+    p.add_argument("--tx", type=lambda x: int(x, 0), default=0x7E0, help="request CAN id")
+    p.add_argument("--rx", type=lambda x: int(x, 0), default=0x7E8, help="response CAN id")
+    p.add_argument("--emit-profile", help="write a derived ECU profile YAML/JSON")
+    p.add_argument("--emit-pairs", help="write extracted seed/key pairs to a file")
+    p.set_defaults(func=cmd_analyze_trace)
+
+    # analyze-firmware
+    p = sub.add_parser("analyze-firmware", help="detect program regions in a firmware dump")
+    p.add_argument("firmware", help="firmware file (.bin/.hex/.s19)")
+    p.add_argument("--base", type=lambda x: int(x, 0), default=0x80000000,
+                   help="base address for raw .bin dumps")
+    p.add_argument("--min-gap", type=lambda x: int(x, 0), default=0x1000,
+                   help="minimum 0xFF gap that separates two regions")
+    p.add_argument("--align", type=lambda x: int(x, 0), default=0x100)
+    p.add_argument("--emit-profile", help="write a derived ECU profile YAML/JSON")
+    p.set_defaults(func=cmd_analyze_firmware)
+
+    # ingest
+    p = sub.add_parser("ingest", help="scan a folder and auto-process files")
+    p.add_argument("dir", nargs="?", default="_input", help="folder to scan (default: _input)")
+    p.add_argument("--tx", type=lambda x: int(x, 0), default=0x7E0)
+    p.add_argument("--rx", type=lambda x: int(x, 0), default=0x7E8)
+    p.add_argument("--base", type=lambda x: int(x, 0), default=0x80000000)
+    p.add_argument("--level", type=lambda x: int(x, 0), default=0x11)
+    p.set_defaults(func=cmd_ingest)
 
     # seedkey-server
     p = sub.add_parser("seedkey-server", help="run the seed/key network server")

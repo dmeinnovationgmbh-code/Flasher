@@ -292,6 +292,56 @@ def load_firmware(path: str, base_address: int = 0) -> FirmwareImage:
     return load_binary(path, base_address)
 
 
+def detect_regions(
+    image: FirmwareImage,
+    *,
+    fill: int = 0xFF,
+    min_gap: int = 0x1000,
+    align: int = 0x100,
+) -> List[Tuple[int, int]]:
+    """Suggest program regions by finding runs of non-``fill`` data.
+
+    Runs separated by a gap smaller than ``min_gap`` are merged; the result is
+    a list of ``(start, size)`` tuples aligned to ``align``. Handy for turning
+    a raw ECU dump into a memory-map skeleton for an ECU profile.
+    """
+
+    low, high = image.span
+    if high <= low:
+        return []
+    blob = image.read(low, high - low, fill=fill)
+
+    runs: List[List[int]] = []  # [start, end) absolute
+    run_start: Optional[int] = None
+    gap = 0
+    for i, byte in enumerate(blob):
+        if byte != fill:
+            if run_start is None:
+                run_start = i
+            gap = 0
+        else:
+            if run_start is not None:
+                gap += 1
+                if gap >= min_gap:
+                    runs.append([run_start, i - gap + 1])
+                    run_start = None
+                    gap = 0
+    if run_start is not None:
+        end = len(blob) - gap if gap else len(blob)
+        runs.append([run_start, end])
+
+    regions: List[Tuple[int, int]] = []
+    for start, end in runs:
+        abs_start = low + start
+        abs_end = low + end
+        # align outward
+        abs_start -= abs_start % align
+        if abs_end % align:
+            abs_end += align - (abs_end % align)
+        regions.append((abs_start, abs_end - abs_start))
+    return regions
+
+
 def save_binary(image: FirmwareImage, path: str, fill: int = 0xFF) -> None:
     """Write the image out as a flat binary (gaps filled) from its span."""
 

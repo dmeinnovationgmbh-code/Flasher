@@ -20,7 +20,14 @@ from .ecu_profile import (
     default_profile,
     load_profile,
 )
-from .firmware import FirmwareImage, FlashBlock, Segment, load_firmware
+from .firmware import (
+    FirmwareImage,
+    FlashBlock,
+    Segment,
+    detect_regions,
+    load_firmware,
+)
+from .trace import BusRecorder, TraceReport, analyze as analyze_trace, read_trace
 from .flash_sequence import (
     FlashProgress,
     FlashResult,
@@ -56,6 +63,11 @@ __all__ = [
     "FlashBlock",
     "Segment",
     "load_firmware",
+    "detect_regions",
+    "BusRecorder",
+    "TraceReport",
+    "analyze_trace",
+    "read_trace",
     "Flasher",
     "FlashProgress",
     "FlashResult",

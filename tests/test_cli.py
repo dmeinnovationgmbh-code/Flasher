@@ -77,3 +77,49 @@ def test_cli_identify_simulator(capsys):
     rc = cli.main(["identify", "--simulator", "--profile", "config/med17_7_5_demo.yaml"])
     assert rc == 0
     assert "DID 0x" in capsys.readouterr().out
+
+
+def test_cli_analyze_firmware(capsys):
+    with tempfile.TemporaryDirectory() as d:
+        fw = os.path.join(d, "dump.bin")
+        blob = bytearray(b"\xff" * 0x8000)
+        blob[0x1000:0x1800] = bytes((i * 3) & 0xFF for i in range(0x800))
+        blob[0x5000:0x5400] = bytes((0x40 + (i & 0x1F)) & 0xFF for i in range(0x400))
+        with open(fw, "wb") as fh:
+            fh.write(blob)
+        prof = os.path.join(d, "out.yaml")
+        rc = cli.main(["analyze-firmware", fw, "--base", "0x80000000", "--emit-profile", prof])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Detected 2 region(s)" in out
+        assert os.path.isfile(prof)
+
+
+def test_cli_analyze_trace(capsys):
+    # a minimal hand-written candump with one session-control exchange
+    with tempfile.TemporaryDirectory() as d:
+        log = os.path.join(d, "t.log")
+        with open(log, "w") as fh:
+            fh.write("(0.001000) can0 7E0#0210025555555555\n")
+            fh.write("(0.002000) can0 7E8#06500300320 1F455\n".replace(" ", ""))
+        rc = cli.main(["analyze-trace", log])
+        assert rc == 0
+        assert "sessions" in capsys.readouterr().out
+
+
+def test_cli_ingest(capsys):
+    with tempfile.TemporaryDirectory() as d:
+        # a firmware dump and a seed/key pairs file
+        with open(os.path.join(d, "fw.bin"), "wb") as fh:
+            fh.write(b"\xff" * 0x100 + b"\x5a" * 0x200 + b"\xff" * 0x2000 + b"\xa5" * 0x100)
+        with open(os.path.join(d, "pairs.txt"), "w") as fh:
+            from med17flasher.seedkey import compute_key
+
+            for s in ("11223344", "deadbeef", "00000001"):
+                k = compute_key("xor", bytes.fromhex(s), params={"k": 0x1234ABCD}).hex()
+                fh.write(f"{s} {k}\n")
+        rc = cli.main(["ingest", d, "--base", "0x80000000"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Ingest complete" in out
+        assert "recovered seed/key" in out  # 3 distinct-seed pairs -> xor recovered
