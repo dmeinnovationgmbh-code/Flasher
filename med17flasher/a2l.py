@@ -132,6 +132,33 @@ class A2lCompuMethod:
 
 
 @dataclass
+class A2lEvent:
+    """An XCP DAQ event channel (a selectable sampling raster)."""
+
+    number: int
+    name: str
+    period_s: Optional[float] = None      # cycle x 10^unit, if given
+
+
+@dataclass
+class A2lXcp:
+    """XCP transport parameters read from the module's ``IF_DATA XCP`` block.
+
+    Lets the measurement tool auto-configure itself: the CAN ids come straight
+    from ``XCP_ON_CAN`` and the DAQ rasters from the ``EVENT`` blocks, so the
+    user does not have to type ``--cro/--dto`` or guess event numbers.
+    """
+
+    transport: str = "can"                # "can" or "udp"
+    can_id_master: Optional[int] = None   # CRO: master -> slave (id only, no flag)
+    can_id_slave: Optional[int] = None    # DTO: slave  -> master
+    can_id_broadcast: Optional[int] = None
+    is_extended: bool = False             # 29-bit ids (ASAM flags them with bit 31)
+    baudrate: Optional[int] = None
+    events: List[A2lEvent] = field(default_factory=list)
+
+
+@dataclass
 class A2lFile:
     """The subset of an A2L we care about, plus whatever went wrong reading it."""
 
@@ -140,6 +167,7 @@ class A2lFile:
     measurements: Dict[str, A2lMeasurement] = field(default_factory=dict)
     characteristics: Dict[str, A2lCharacteristic] = field(default_factory=dict)
     compu_methods: Dict[str, A2lCompuMethod] = field(default_factory=dict)
+    xcp: Optional[A2lXcp] = None
     warnings: List[str] = field(default_factory=list)
 
     # -- lookup ----------------------------------------------------------- #
@@ -537,6 +565,58 @@ def _parse_compu_method(body: List[Token], warns: _WarnLog) -> Optional[A2lCompu
                           nonlinear=nonlinear, coeffs=coeffs)
 
 
+def _parse_xcp_on_can(body: List[Token]) -> Dict[str, Optional[int]]:
+    """Extract CAN ids + baudrate from an ``XCP_ON_CAN`` block body.
+
+    Layout (ASAM): ``XCP_ON_CAN <version> CAN_ID_BROADCAST <id> CAN_ID_MASTER
+    <id> CAN_ID_SLAVE <id> BAUDRATE <baud> ...``. Master transmits on
+    CAN_ID_MASTER; the slave replies (incl. all DAQ) on CAN_ID_SLAVE.
+    """
+
+    out: Dict[str, Optional[int]] = {}
+    for key in ("CAN_ID_MASTER", "CAN_ID_SLAVE", "CAN_ID_BROADCAST", "BAUDRATE"):
+        raw = _keyword_value(body, key)
+        out[key.lower()] = _to_int(raw) if raw is not None else None
+    # ASAM flags a 29-bit (extended) identifier by setting bit 31; the real id
+    # is the low 29 bits. Detect it and strip the flag off the ids.
+    extended = False
+    for key in ("can_id_master", "can_id_slave", "can_id_broadcast"):
+        v = out.get(key)
+        if v is not None and v & 0x80000000:
+            extended = True
+            out[key] = v & 0x1FFFFFFF
+    out["is_extended"] = extended  # type: ignore[assignment]
+    return out
+
+
+def _parse_event(body: List[Token]) -> Optional[A2lEvent]:
+    """Extract (number, name, period) from an ``EVENT`` block body.
+
+    Layout: ``EVENT "<long>" "<short>" <channel#> <direction> <maxDaqList>
+    <cycle> <timeUnit> <priority>``. The period is ``cycle x 10^unit``; the
+    time-unit codes are ASAM exponents (1ms=6? varies), so we only compute a
+    period when both a cycle and a plausible unit are present, and never fail
+    the parse over a missing/odd raster.
+    """
+
+    strings = [v for is_s, v in body if is_s]
+    numbers = [n for n in (_to_int(v) for is_s, v in body if not is_s) if n is not None]
+    if not numbers:
+        return None
+    name = strings[0] if strings else f"event{numbers[0]}"
+    number = numbers[0]                 # EVENT_CHANNEL_NUMBER is the first number
+    period: Optional[float] = None
+    # numbers after the channel #: [maxDaqList, cycle, timeUnit, priority]
+    if len(numbers) >= 4:
+        cycle, unit = numbers[2], numbers[3]
+        # ASAM time-unit codes: 1ns..1s as exponents; map the common ones.
+        _UNIT = {0: 1e-9, 1: 1e-8, 2: 1e-7, 3: 1e-6, 4: 1e-5, 5: 1e-4,
+                 6: 1e-3, 7: 1e-2, 8: 1e-1, 9: 1.0}
+        if cycle > 0 and unit in _UNIT:
+            period = cycle * _UNIT[unit]
+    return A2lEvent(number=number, name=name.strip(), period_s=period)
+
+
 def _collect_numbers(body: Sequence[Token], keyword: str, count: int
                      ) -> Optional[List[float]]:
     """Return the ``count`` numbers following ``keyword``, or ``None``."""
@@ -591,6 +671,26 @@ def parse_a2l(text: str) -> A2lFile:
                 raise FirmwareError("A2L: file ends right after /begin")
             btype = btype.upper()
             seen_block = True
+
+            if btype in ("XCP_ON_CAN", "XCP_ON_UDP_IP", "EVENT"):
+                body = _collect_block(stream, btype)
+                if out.xcp is None:
+                    out.xcp = A2lXcp()
+                if btype == "XCP_ON_CAN":
+                    ids = _parse_xcp_on_can(body)
+                    out.xcp.transport = "can"
+                    out.xcp.can_id_master = ids["can_id_master"]
+                    out.xcp.can_id_slave = ids["can_id_slave"]
+                    out.xcp.can_id_broadcast = ids["can_id_broadcast"]
+                    out.xcp.is_extended = bool(ids.get("is_extended"))
+                    out.xcp.baudrate = ids["baudrate"]
+                elif btype == "XCP_ON_UDP_IP":
+                    out.xcp.transport = "udp"
+                else:  # EVENT
+                    ev = _parse_event(body)
+                    if ev is not None:
+                        out.xcp.events.append(ev)
+                continue
 
             if btype in _INTERESTING:
                 body = _collect_block(stream, btype)

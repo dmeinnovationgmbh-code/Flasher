@@ -181,6 +181,13 @@ def configure_daq(client: XcpClient, signals: List[Signal], *, daq: int = 0,
                   timestamp: bool = False) -> DaqLayout:
     """Allocate one DAQ list holding all signals in a single ODT and arm it."""
 
+    # A timestamp is carried only in the first ODT of a DAQ list; our single-ODT
+    # decoder does not skip those bytes, so refuse rather than mis-decode. (Use
+    # the sample's own arrival time instead.)
+    if timestamp:
+        raise NotImplementedError(
+            "DAQ timestamps are not decoded; call configure_daq(timestamp=False)")
+
     total = sum(s.size for s in signals)
     budget = max(1, client.max_dto - 1)  # one PID byte precedes the data
     if total > budget:

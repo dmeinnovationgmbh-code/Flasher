@@ -322,3 +322,68 @@ def test_cli_a2l_reports_a_broken_file(tmp_path, capsys):
     path.write_text("/begin PROJECT P \"never closed\"", encoding="utf-8")
     assert cli.main(["a2l", str(path)]) == 1
     assert "a2l failed" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- #
+# XCP IF_DATA: transport (CAN ids) + DAQ event channels
+# --------------------------------------------------------------------------- #
+_XCP_A2L = r"""
+/begin PROJECT prj "p"
+/begin MODULE mod "m"
+  /begin IF_DATA XCP
+    /begin XCP_ON_CAN
+      0x100
+      CAN_ID_BROADCAST 0x52
+      CAN_ID_MASTER 0x7E0
+      CAN_ID_SLAVE 0x7E1
+      BAUDRATE 500000
+    /end XCP_ON_CAN
+    /begin DAQ
+      /begin EVENT "10 ms" "10ms" 0x0 DAQ 0xFF 0x0A 0x06 0x00 /end EVENT
+      /begin EVENT "100 ms" "100ms" 0x1 DAQ 0xFF 0x64 0x06 0x00 /end EVENT
+    /end DAQ
+  /end IF_DATA
+  /begin MEASUREMENT nmot "Engine speed" UWORD Rpm 0 0 0 8000 ECU_ADDRESS 0x2000 /end MEASUREMENT
+  /begin COMPU_METHOD Rpm "rpm" RAT_FUNC "%.0f" "1/min" COEFFS 0 1 0 0 0 1 /end COMPU_METHOD
+/end MODULE
+/end PROJECT
+"""
+
+
+def test_xcp_on_can_transport_parsed():
+    f = parse_a2l(_XCP_A2L)
+    assert f.xcp is not None
+    assert f.xcp.transport == "can"
+    assert f.xcp.can_id_master == 0x7E0
+    assert f.xcp.can_id_slave == 0x7E1
+    assert f.xcp.can_id_broadcast == 0x52
+    assert f.xcp.baudrate == 500000
+    assert f.xcp.is_extended is False
+    # the measurement is still parsed alongside the IF_DATA
+    assert "nmot" in f.measurements
+
+
+def test_xcp_daq_events_and_periods():
+    f = parse_a2l(_XCP_A2L)
+    evs = {e.number: e for e in f.xcp.events}
+    assert set(evs) == {0, 1}
+    assert evs[0].period_s == pytest.approx(0.010)   # 0x0A cycles x 1ms
+    assert evs[1].period_s == pytest.approx(0.100)   # 0x64 cycles x 1ms
+    assert evs[0].name == "10 ms"
+
+
+def test_xcp_extended_can_ids_stripped():
+    # ASAM flags 29-bit ids with bit 31; the real id is the low 29 bits.
+    ext = _XCP_A2L.replace("0x7E0", "0x800007E0").replace("0x7E1", "0x800007E1")
+    f = parse_a2l(ext)
+    assert f.xcp.is_extended is True
+    assert f.xcp.can_id_master == 0x7E0
+    assert f.xcp.can_id_slave == 0x7E1
+
+
+def test_no_xcp_block_leaves_xcp_none():
+    f = parse_a2l(
+        '/begin PROJECT p "p" /begin MODULE m "m" '
+        '/begin MEASUREMENT x "d" UBYTE NO_COMPU_METHOD 0 0 0 255 ECU_ADDRESS 0x10 '
+        '/end MEASUREMENT /end MODULE /end PROJECT')
+    assert f.xcp is None

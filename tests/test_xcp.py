@@ -158,3 +158,24 @@ def test_big_endian_slave_round_trip():
         assert int.from_bytes(client.short_upload(0x4000, 2), "big") == 0xBEEF
     finally:
         slave.stop()
+
+
+def test_configure_daq_rejects_timestamp():
+    # Our single-ODT decoder doesn't skip timestamp bytes, so it must refuse.
+    slave, client = _pair()
+    try:
+        client.connect()
+        with pytest.raises(NotImplementedError):
+            configure_daq(client, [Signal("n", 0x10, "u16")], timestamp=True)
+    finally:
+        slave.stop()
+
+
+def test_connect_reports_address_granularity():
+    slave, client = _pair()
+    try:
+        info = client.connect()
+        assert info["addressGranularity"] == 1     # BYTE granularity
+        assert client.address_granularity == 1
+    finally:
+        slave.stop()

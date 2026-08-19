@@ -23,6 +23,7 @@ class XcpClient:
         self.tp = transport
         self.connected = False
         self.byte_order = "little"      # refined by CONNECT
+        self.address_granularity = 1    # bytes per address unit; refined by CONNECT
         self.max_cto = 8
         self.max_dto = 8
         self.resource = 0
@@ -53,6 +54,14 @@ class XcpClient:
         self.resource = resp[1] if len(resp) > 1 else 0
         cmb = resp[2] if len(resp) > 2 else 0
         self.byte_order = "big" if (cmb & X.CMB_BYTE_ORDER_MOTOROLA) else "little"
+        # ADDRESS_GRANULARITY (COMM_MODE_BASIC bits 1-2): 0=BYTE, 1=WORD, 2=DWORD.
+        # Our address/DAQ math is in bytes; warn (don't silently misread) if a
+        # slave uses a coarser granularity, which is rare on MED17/TriCore.
+        self.address_granularity = 1 << ((cmb & X.CMB_ADDRESS_GRANULARITY_MASK) >> 1)
+        if self.address_granularity != 1:
+            log.warning("XCP slave uses ADDRESS_GRANULARITY=%d bytes; this client "
+                        "assumes byte granularity, addresses may be off",
+                        self.address_granularity)
         self.max_cto = resp[3] if len(resp) > 3 else 8
         if len(resp) >= 6:
             self.max_dto = int.from_bytes(resp[4:6], self.byte_order)
@@ -60,6 +69,7 @@ class XcpClient:
         info = {
             "resource": self.resource,
             "byteOrder": self.byte_order,
+            "addressGranularity": self.address_granularity,
             "maxCto": self.max_cto,
             "maxDto": self.max_dto,
             "protocolLayer": resp[6] if len(resp) > 6 else None,

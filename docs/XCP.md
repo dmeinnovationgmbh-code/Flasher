@@ -33,6 +33,20 @@ med17flasher xcp \
 med17flasher xcp --backend socketcan:can0 --daq --signals-file signals.txt --csv drive.csv
 ```
 
+### From an A2L (auto-config)
+
+If you have the ECU's A2L, let it fill in the CAN ids and the signals:
+
+```bash
+# CRO/DTO come from the A2L's IF_DATA XCP_ON_CAN; --find picks the measurements:
+med17flasher xcp --backend socketcan:can0 --a2l ecu.a2l --find "n*ot" --csv drive.csv
+# inspect what an A2L exposes (transport, DAQ events, measurements):
+med17flasher a2l ecu.a2l --find rpm
+```
+
+29-bit (extended) CAN ids in the A2L are detected automatically. See
+[`REFERENCES.md`](REFERENCES.md) for the `IF_DATA` layout.
+
 ### Signal spec
 
 `NAME@ADDRESS:TYPE[:factor[:offset[:unit]]]` — physical value = `raw * factor + offset`.

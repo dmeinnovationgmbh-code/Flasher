@@ -515,6 +515,33 @@ def cmd_measure(args) -> int:
                 if line and not line.startswith("#"):
                     specs.append(line)
 
+    # --a2l: pull the XCP CAN ids (and, with --find, the signals) from an A2L,
+    # so the operator doesn't type --cro/--dto or hand-write signal specs.
+    a2l_signals = []
+    if getattr(args, "a2l", None):
+        from .a2l import load_a2l
+
+        try:
+            a2l = load_a2l(args.a2l)
+        except Med17FlasherError as exc:
+            print(f"a2l failed: {exc}", file=sys.stderr)
+            return 1
+        if a2l.xcp and a2l.xcp.transport == "can" and a2l.xcp.can_id_master is not None:
+            # Only override ids the user left at the defaults.
+            if args.cro == 0x7E0:
+                args.cro = a2l.xcp.can_id_master
+            if args.dto == 0x7E1:
+                args.dto = a2l.xcp.can_id_slave
+            if a2l.xcp.is_extended:
+                args.extended = True
+            print(f"XCP-on-CAN from A2L: CRO 0x{args.cro:X} / DTO 0x{args.dto:X}"
+                  + ("  (29-bit)" if a2l.xcp.is_extended else ""))
+        if args.find:
+            names = [m.name for m in a2l.find(args.find)]
+            a2l_signals = a2l.to_signals(names)
+            print(f"{len(a2l_signals)} signal(s) selected from {args.a2l}"
+                  f" matching {args.find!r}")
+
     sim = None
     if args.simulator:
         net = VirtualCanNetwork()
@@ -540,13 +567,13 @@ def cmd_measure(args) -> int:
     else:
         bus = create_bus(args.backend)
 
-    if not specs:
-        print("no signals given; use --signal name@addr:type (repeatable) or "
-              "--signals-file FILE", file=sys.stderr)
+    if not specs and not a2l_signals:
+        print("no signals given; use --signal name@addr:type (repeatable), "
+              "--signals-file FILE, or --a2l FILE --find PATTERN", file=sys.stderr)
         return 2
 
     try:
-        signals = [parse_signal(s) for s in specs]
+        signals = a2l_signals + [parse_signal(s) for s in specs]
     except ValueError as exc:
         print(f"bad signal spec: {exc}", file=sys.stderr)
         return 2
@@ -619,6 +646,22 @@ def cmd_a2l(args) -> int:
         print(f"  warning: {warning}")
     if len(a2l.warnings) > 5:
         print(f"  ... {len(a2l.warnings) - 5} more warning(s)")
+
+    if a2l.xcp:
+        x = a2l.xcp
+        if x.transport == "can" and x.can_id_master is not None:
+            print(f"  XCP-on-CAN: CRO 0x{x.can_id_master:X} / DTO "
+                  f"0x{x.can_id_slave:X}" + (f" @ {x.baudrate}" if x.baudrate else "")
+                  + "  (use: med17flasher xcp --a2l ...)")
+        elif x.transport == "udp":
+            print("  XCP-on-UDP (Ethernet) - CAN transport args not applicable")
+        if x.events:
+            rasters = ", ".join(
+                f"#{e.number} {e.name}" + (f" ({e.period_s * 1000:g}ms)"
+                                           if e.period_s else "")
+                for e in x.events[:6])
+            print(f"  DAQ events: {rasters}"
+                  + (" ..." if len(x.events) > 6 else ""))
 
     rows = a2l.find(args.find if args.find else "*")
     shown = rows if args.limit <= 0 else rows[: args.limit]
@@ -1251,6 +1294,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "(TYPE u8/s8/u16/s16/u32/s32/f32/f64; optional :factor:offset:unit). "
                         "Repeatable.")
     p.add_argument("--signals-file", help="file with one signal spec per line (# comments)")
+    p.add_argument("--a2l", help="ASAP2/A2L file: auto-derive the XCP CAN ids "
+                   "(CRO/DTO) and, with --find, the signals to measure")
+    p.add_argument("--find", help="with --a2l: measure the A2L measurements whose "
+                   "name matches this pattern (substring or glob)")
     p.add_argument("--cro", type=lambda x: int(x, 0), default=0x7E0,
                    help="XCP command (CRO) CAN id (default 0x7E0)")
     p.add_argument("--dto", type=lambda x: int(x, 0), default=0x7E1,
