@@ -7,6 +7,7 @@ list of sub-commands:
 * ``identify``       - read the ECU's identification DIDs
 * ``read``           - read a memory range to a file
 * ``seedkey``        - compute a key from a seed on the command line
+* ``seedkey-solve``  - recover a seed/key algorithm from captured seed/key pairs
 * ``seedkey-server`` - run the seed/key network server
 * ``fileserver``     - run the firmware file server
 * ``simulator``      - run a stand-alone virtual MED17.7.5
@@ -237,6 +238,59 @@ def cmd_seedkey(args) -> int:
     return 0
 
 
+def cmd_seedkey_solve(args) -> int:
+    from .seedkey import SeedKeySolver, load_pairs, load_wordlist
+    from .seedkey.solver import SeedKeyPair
+
+    pairs = []
+    if args.pairs:
+        pairs.extend(load_pairs(args.pairs))
+    for item in args.pair or []:
+        seed_hex, _, key_hex = item.partition(":")
+        if not key_hex:
+            print(f"bad --pair {item!r}, expected seedhex:keyhex", file=sys.stderr)
+            return 2
+        pairs.append(SeedKeyPair.from_hex(seed_hex, key_hex))
+    if not pairs:
+        print("no pairs given; use --pairs FILE or --pair seed:key", file=sys.stderr)
+        return 2
+
+    wordlist = load_wordlist(args.wordlist) if args.wordlist else None
+    solver = SeedKeySolver(pairs)
+    results = solver.solve(level=args.level, wordlist=wordlist)
+
+    if not results:
+        print(f"No candidate reproduced the {len(pairs)} pair(s).")
+        print("Tips: supply more/again-captured pairs, a --wordlist of likely "
+              "32-bit constants, or plug the routine in directly (--plugin).")
+        return 1
+
+    print(f"Analysed {len(pairs)} pair(s):")
+    full = [r for r in results if r.is_full_match]
+    for r in results[:10]:
+        print(f"  {r}")
+    if full:
+        best = full[0]
+        print("\nRECOVERED:")
+        print(f"  algorithm = {best.algorithm}")
+        print(f"  params    = {best.params}")
+        print(f"  level     = 0x{best.level:X}")
+        if args.emit_store:
+            import json as _json
+
+            entry = [{
+                "ecu": args.ecu, "level": best.level,
+                "algorithm": best.algorithm, "params": best.params,
+                "note": "recovered by seedkey-solve",
+            }]
+            with open(args.emit_store, "w", encoding="utf-8") as fh:
+                _json.dump(entry, fh, indent=2)
+            print(f"  wrote seed/key store -> {args.emit_store}")
+        return 0
+    print("\nNo full match - best candidate above is partial.")
+    return 1
+
+
 def cmd_seedkey_server(args) -> int:
     from .seedkey.server import SeedKeyHttpServer, SeedKeyService, SeedKeyTcpServer
 
@@ -389,6 +443,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--param", action="append", help="algorithm parameter key=value (repeatable)")
     p.add_argument("--store", help="use a seed/key store JSON instead of --algorithm")
     p.set_defaults(func=cmd_seedkey)
+
+    # seedkey-solve
+    p = sub.add_parser("seedkey-solve", help="recover a seed/key algorithm from captured pairs")
+    p.add_argument("--pairs", help="file of seed/key pairs (.json or text 'seed key' lines)")
+    p.add_argument("--pair", action="append", help="a single seedhex:keyhex pair (repeatable)")
+    p.add_argument("--wordlist", help="file of candidate 32-bit constants for brute force")
+    p.add_argument("--level", type=lambda x: int(x, 0), default=0, help="security access level")
+    p.add_argument("--ecu", default="MED17.7.5")
+    p.add_argument("--emit-store", help="write a seed/key store JSON for a full match")
+    p.set_defaults(func=cmd_seedkey_solve)
 
     # seedkey-server
     p = sub.add_parser("seedkey-server", help="run the seed/key network server")

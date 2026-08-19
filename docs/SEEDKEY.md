@@ -83,6 +83,47 @@ med17flasher flash --plugin my_algo.py --seedkey-store my_seedkeys.json firmware
 # (with an entry in the store whose "algorithm" is "my_ecu")
 ```
 
+## Recovering the algorithm from captured pairs (`seedkey-solve`)
+
+If you don't yet have the routine, the honest way to obtain it is to **derive it
+from example pairs you capture from an ECU you own** (or from your licensed
+tool): request a seed (`0x27` requestSeed), let the trusted tool produce the
+key, and record the `(seed, key)` pair. A handful of pairs is usually enough.
+
+```bash
+# pairs.txt: one "seedhex keyhex" per line (or a .json list of {seed,key})
+med17flasher seedkey-solve --pairs pairs.txt --level 0x11 --emit-store recovered.json
+```
+
+The solver:
+
+* **directly solves** the simple families — `xor` (`k = seed ^ key`),
+  `add` (`k = key - seed`), `sum` (per-byte offset) — from as little as one pair;
+* **brute-forces** the structured families (`med17`, `vag_crc`) over a parameter
+  grid; supply a `--wordlist` of likely 32-bit constants to make that tractable:
+
+```bash
+med17flasher seedkey-solve --pairs pairs.txt --wordlist constants.txt \
+    --level 0x11 --emit-store recovered.json
+```
+
+On a full match it prints the algorithm + parameters and (with `--emit-store`)
+writes a ready-to-use seed/key store you pass straight to `flash --seedkey-store`.
+
+Programmatic use:
+
+```python
+from med17flasher.seedkey import SeedKeySolver, load_pairs
+best = SeedKeySolver(load_pairs("pairs.txt")).best(level=0x11, wordlist=[0x1C5A36B7, ...])
+print(best.algorithm, best.params)   # e.g. med17 {'k': ..., 'rounds': 5, 'shift': 5}
+```
+
+> The solver never invents an algorithm — it only reports one that provably
+> reproduces **every** pair you supply. An unknown 32-bit-keyed proprietary
+> routine generally cannot be brute-forced without a wordlist of candidate
+> constants; when it can't be recovered, plug the routine in directly as a
+> plug-in (above).
+
 ## The seed/key server
 
 Traditionally the secret routine lives behind a small network service so it sits

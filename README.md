@@ -23,7 +23,7 @@ any hardware.
 | **ISO-TP** | Full ISO 15765-2: SF/FF/CF/FC, block size & STmin, padding, 32-bit escape frames, extended addressing |
 | **UDS client** | Sessions, ECU reset, Security Access, Routine Control, Request/Transfer Download, Read/Write DID & memory, TesterPresent keep-alive, `responsePending` (0x78) handling |
 | **Flash sequence** | Session → preconditions → programming session → seed/key → per-block erase/download/transfer/verify → dependencies → reset, with progress + abort |
-| **Seed/Key** | Pluggable algorithm framework + reference algorithms + a JSON catalogue + an HTTP/TCP **seed/key server** |
+| **Seed/Key** | Pluggable algorithm framework + reference algorithms + a JSON catalogue + a **solver** that recovers the algorithm from captured seed→key pairs + an HTTP/TCP **seed/key server** |
 | **File server** | Dependency-free HTTP REST firmware repository (upload/list/download/delete + metadata + bearer auth) with a client |
 | **Simulator** | A virtual MED17.7.5 that answers real UDS, including a genuine seed/key challenge and CRC-checked programming |
 | **Front-ends** | A Tkinter desktop GUI and a full-featured CLI |
@@ -83,6 +83,7 @@ med17flasher flash          reprogram an ECU from a firmware file (.bin/.hex/.s1
 med17flasher identify       read identification DIDs
 med17flasher read           read a memory range to a file
 med17flasher seedkey        compute a key from a seed
+med17flasher seedkey-solve  recover a seed/key algorithm from captured pairs
 med17flasher seedkey-server run the seed/key network server (HTTP + TCP)
 med17flasher fileserver     run the firmware file server
 med17flasher simulator      run a stand-alone virtual MED17.7.5

@@ -15,6 +15,13 @@ from .base import (
     register,
     register_function,
 )
+from .solver import (
+    SeedKeyPair,
+    SeedKeySolver,
+    SolveResult,
+    load_pairs,
+    load_wordlist,
+)
 from .store import SeedKeyEntry, SeedKeyStore
 
 __all__ = [
@@ -28,4 +35,9 @@ __all__ = [
     "register_function",
     "SeedKeyStore",
     "SeedKeyEntry",
+    "SeedKeySolver",
+    "SeedKeyPair",
+    "SolveResult",
+    "load_pairs",
+    "load_wordlist",
 ]
