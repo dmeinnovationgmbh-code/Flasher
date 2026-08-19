@@ -25,6 +25,8 @@ from ..core import (
     UdsClient,
     UdsTiming,
     VirtualCanNetwork,
+    create_bus,
+    load_firmware,
     load_profile,
 )
 from ..core.ecu_profile import EcuProfile
@@ -90,10 +92,18 @@ class FlashService:
         *,
         throttle_kbs: float = 180.0,
         backend: str = "simulator",
+        firmware_path: Optional[str] = None,
+        allow_write: bool = False,
     ) -> None:
         self.profile = profile or load_profile(_default_profile_path())
         self.throttle_kbs = throttle_kbs
         self.backend = backend
+        self.is_simulator = backend == "simulator"
+        self.firmware_path = firmware_path
+        # Writing to REAL hardware is refused unless explicitly enabled AND a
+        # real firmware image is supplied - the demo pattern must never be
+        # written to a real ECU.
+        self.allow_write = allow_write and not self.is_simulator and bool(firmware_path)
 
         self._subscribers: List[_Subscriber] = []
         self._sub_lock = threading.Lock()
@@ -150,20 +160,17 @@ class FlashService:
         return {"unlocked": True, "id": map_id}
 
     def identify(self) -> List[dict]:
-        """Read identification DIDs live from the (simulated) ECU."""
+        """Read identification DIDs live from the ECU (simulated or real)."""
 
-        net = VirtualCanNetwork()
-        ecu = self._make_ecu(net)
-        ecu.start()
+        uds, close = self._open_session()
         try:
-            uds = self._make_uds(net)
             out = []
             for did, value in Flasher(uds, self.profile, ProfileSeedKey(self.profile)).identify():
                 out.append({"did": f"0x{did:04X}",
                             "value": value.decode("latin-1", "replace").strip("\x00 ")})
             return out
         finally:
-            ecu.stop()
+            close()
 
     # ------------------------------------------------------------------ #
     # SSE subscription
@@ -208,34 +215,54 @@ class FlashService:
     def abort_flash(self) -> None:
         self._abort.set()
 
-    def _make_ecu(self, net: VirtualCanNetwork) -> VirtualEcu:
-        return VirtualEcu(
-            net.new_endpoint("ecu"), self.profile,
-            VirtualEcuConfig(security_algorithm=self.profile.security.algorithm,
-                             security_params=self.profile.security.params,
-                             max_block_length=0x0FFE),
-        )
-
-    def _make_uds(self, net: VirtualCanNetwork) -> UdsClient:
-        tp = IsoTpLayer(net.new_endpoint("tester"),
-                        IsoTpConfig(tx_id=self.profile.can.tx_id, rx_id=self.profile.can.rx_id,
-                                    padding_byte=self.profile.can.padding_byte))
+    def _make_uds_on(self, bus) -> UdsClient:
+        tp = IsoTpLayer(bus, IsoTpConfig(tx_id=self.profile.can.tx_id, rx_id=self.profile.can.rx_id,
+                                         padding_byte=self.profile.can.padding_byte))
         return UdsClient(tp, UdsTiming(p2=self.profile.timing.p2, p2_star=self.profile.timing.p2_star))
 
-    def _run_flash(self, map_id: Optional[str]) -> None:
-        net = VirtualCanNetwork()
-        ecu = self._make_ecu(net)
-        ecu.start()
-        start = time.time()
-        self._broadcast({"type": "log", "cls": "accent", "msg": "Schreibvorgang gestartet"})
+    def _open_session(self):
+        """Open a UDS session against the simulator or the real adapter.
 
-        # Build a full 2 MB image covering the flashable regions.
+        Returns ``(uds, close)`` where ``close()`` releases the ECU/bus.
+        """
+
+        if self.is_simulator:
+            net = VirtualCanNetwork()
+            ecu = VirtualEcu(
+                net.new_endpoint("ecu"), self.profile,
+                VirtualEcuConfig(security_algorithm=self.profile.security.algorithm,
+                                 security_params=self.profile.security.params,
+                                 max_block_length=0x0FFE),
+            )
+            ecu.start()
+            uds = self._make_uds_on(net.new_endpoint("tester"))
+            return uds, ecu.stop
+        bus = create_bus(self.backend)
+        return self._make_uds_on(bus), bus.close
+
+    def _build_image(self) -> FirmwareImage:
+        if not self.is_simulator:
+            # Real hardware: only ever flash a real, supplied firmware image.
+            return load_firmware(self.firmware_path)
         image = FirmwareImage()
         for region in self.profile.memory_map:
             image.add_segment(region.start,
                               bytes((region.start >> 12) + i * 7 & 0xFF for i in range(region.size)))
-        image.normalise()
+        return image.normalise()
 
+    def _run_flash(self, map_id: Optional[str]) -> None:
+        # Safety gate: never write the demo pattern to real hardware.
+        if not self.is_simulator and not self.allow_write:
+            self._broadcast({"type": "log", "cls": "err",
+                             "msg": "Echtes Schreiben gesperrt · verifiziertes Profil + Firmware "
+                                    "und --allow-write erforderlich"})
+            self._broadcast({"type": "error", "msg": "real write disabled"})
+            self._running = False
+            return
+
+        uds, close = self._open_session()
+        start = time.time()
+        self._broadcast({"type": "log", "cls": "accent", "msg": "Schreibvorgang gestartet"})
         throttle_state = {"t0": time.time(), "bytes": 0}
 
         def progress(p: FlashProgress) -> None:
@@ -245,7 +272,7 @@ class FlashService:
             self._emit_stage_log(p)
 
         try:
-            uds = self._make_uds(net)
+            image = self._build_image()
             flasher = Flasher(uds, self.profile, ProfileSeedKey(self.profile),
                               progress=progress, abort_event=self._abort)
             result = flasher.flash(image)
@@ -259,7 +286,7 @@ class FlashService:
             self._broadcast({"type": "log", "cls": "err", "msg": f"Fehler: {exc}"})
             self._broadcast({"type": "error", "msg": str(exc)})
         finally:
-            ecu.stop()
+            close()
             self._running = False
             self._speed = 0
 

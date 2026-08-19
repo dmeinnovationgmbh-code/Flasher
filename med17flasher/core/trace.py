@@ -25,12 +25,14 @@ simulator.
 from __future__ import annotations
 
 import re
+import threading
+import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from ..logging_setup import get_logger
 from . import uds_const as C
-from .can_backends import CanFrame, VirtualCanNetwork
+from .can_backends import CanBus, CanFrame, VirtualCanNetwork
 from .ecu_profile import (
     CanConfig,
     EcuProfile,
@@ -378,3 +380,82 @@ class BusRecorder:
 
     def __exit__(self, *exc) -> None:
         self.close()
+
+
+# --------------------------------------------------------------------------- #
+# Live capture from a real bus / adapter
+# --------------------------------------------------------------------------- #
+def capture_frames(
+    bus: CanBus,
+    *,
+    seconds: Optional[float] = None,
+    stop_event: Optional[threading.Event] = None,
+    on_frame: Optional[Callable[[TraceFrame], None]] = None,
+    max_frames: Optional[int] = None,
+) -> List[TraceFrame]:
+    """Passively record CAN frames from ``bus`` (a real adapter or the sim bus).
+
+    Records until ``seconds`` elapse, ``stop_event`` is set, or ``max_frames``
+    is reached. Feed the returned frames (or a saved candump) to :func:`analyze`.
+    This is read-only - it never transmits anything.
+    """
+
+    frames: List[TraceFrame] = []
+    deadline = (time.monotonic() + seconds) if seconds else None
+    while True:
+        if stop_event is not None and stop_event.is_set():
+            break
+        if deadline is not None and time.monotonic() >= deadline:
+            break
+        if max_frames is not None and len(frames) >= max_frames:
+            break
+        remaining = 0.25
+        if deadline is not None:
+            remaining = max(0.0, min(remaining, deadline - time.monotonic()))
+        frame = bus.recv(timeout=remaining or 0.01)
+        if frame is None:
+            continue
+        tf = TraceFrame(frame.timestamp or time.time(), frame.arbitration_id,
+                        frame.data, frame.is_extended_id)
+        frames.append(tf)
+        if on_frame is not None:
+            try:
+                on_frame(tf)
+            except Exception:  # pragma: no cover - a UI callback must not stop capture
+                pass
+    return frames
+
+
+class LiveCapture:
+    """Background passive capture from a :class:`CanBus`."""
+
+    def __init__(self, bus: CanBus, on_frame: Optional[Callable[[TraceFrame], None]] = None) -> None:
+        self.bus = bus
+        self._on_frame = on_frame
+        self._frames: List[TraceFrame] = []
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def _run(self) -> None:
+        def collect(tf: TraceFrame) -> None:
+            self._frames.append(tf)
+            if self._on_frame:
+                self._on_frame(tf)
+
+        capture_frames(self.bus, stop_event=self._stop, on_frame=collect)
+
+    def start(self) -> "LiveCapture":
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, name="live-capture", daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self) -> List[TraceFrame]:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2.0)
+        return list(self._frames)
+
+    @property
+    def frames(self) -> List[TraceFrame]:
+        return list(self._frames)

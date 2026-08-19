@@ -5,6 +5,8 @@ list of sub-commands:
 
 * ``flash``          - reprogram an ECU from a firmware file
 * ``identify``       - read the ECU's identification DIDs
+* ``scan``           - read-only ECU reconnaissance (sessions / DIDs / seeds)
+* ``capture``        - passively record CAN frames to a candump log
 * ``read``           - read a memory range to a file
 * ``seedkey``        - compute a key from a seed on the command line
 * ``seedkey-solve``  - recover a seed/key algorithm from captured seed/key pairs
@@ -221,6 +223,88 @@ def cmd_read(args) -> int:
     except Med17FlasherError as exc:
         print(f"read failed: {exc}", file=sys.stderr)
         return 1
+    finally:
+        if sim:
+            sim.stop()
+        bus.close()
+
+
+def cmd_scan(args) -> int:
+    from .recon import EcuScanner
+
+    profile = _load_profile_arg(args.profile)
+    if args.tx is not None:
+        profile.can.tx_id = args.tx
+    if args.rx is not None:
+        profile.can.rx_id = args.rx
+    bus, sim = _open_bus(args, profile)
+    try:
+        uds = _build_uds(bus, profile)
+        scanner = EcuScanner(uds, profile.can.tx_id, profile.can.rx_id)
+        print(f"Scanning ECU on {args.backend if not args.simulator else 'simulator'} "
+              f"(tx=0x{profile.can.tx_id:03X} rx=0x{profile.can.rx_id:03X}) ...")
+        report = scanner.scan(
+            probe_programming_session=args.deep,
+            read_memory_at=(args.read_memory if args.read_memory is not None else None),
+        )
+        print(report.text_summary())
+        if args.emit_profile:
+            _dump_profile(report.to_profile(), args.emit_profile)
+            print(f"\nwrote profile skeleton -> {args.emit_profile}")
+        if args.emit_seeds and report.seeds:
+            with open(args.emit_seeds, "w", encoding="utf-8") as fh:
+                for level, info in report.seeds.items():
+                    if info.startswith("seed "):
+                        fh.write(f"# level 0x{level:02X}\n{info.split()[1]}\n")
+            print(f"wrote seeds -> {args.emit_seeds}")
+            print("Note: seeds alone cannot recover the algorithm - you also need the "
+                  "matching keys. Capture a real flash (med17flasher capture) to get pairs.")
+        return 0 if report.online else 1
+    except Med17FlasherError as exc:
+        print(f"scan failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if sim:
+            sim.stop()
+        bus.close()
+
+
+def cmd_capture(args) -> int:
+    import threading as _threading
+
+    from .core import capture_frames, write_candump
+    from .core.trace import analyze
+
+    profile = _load_profile_arg(args.profile)
+    bus, sim = _open_bus(args, profile)
+    stop = _threading.Event()
+    count = {"n": 0}
+
+    def on_frame(_tf):
+        count["n"] += 1
+        if count["n"] % 200 == 0:
+            sys.stdout.write(f"\r  captured {count['n']} frames ...")
+            sys.stdout.flush()
+
+    try:
+        where = "simulator" if args.simulator else args.backend
+        print(f"Capturing CAN frames on {where} "
+              f"for {args.seconds or '∞'}s (Ctrl+C to stop) ...")
+        try:
+            frames = capture_frames(bus, seconds=args.seconds, stop_event=stop, on_frame=on_frame)
+        except KeyboardInterrupt:
+            stop.set()
+            frames = []
+        sys.stdout.write("\n")
+        write_candump(frames, args.output)
+        print(f"wrote {len(frames)} frames -> {args.output}")
+        if args.analyze and frames:
+            report = analyze(frames, tx_id=profile.can.tx_id, rx_id=profile.can.rx_id)
+            print(f"  quick analysis: {report.request_count} requests, "
+                  f"{len(report.seed_key_pairs)} seed/key pair(s), "
+                  f"{len(report.download_blocks)} download block(s)")
+            print(f"  run: med17flasher analyze-trace {args.output} --emit-profile ecu.yaml")
+        return 0
     finally:
         if sim:
             sim.stop()
@@ -560,7 +644,13 @@ def cmd_webserver(args) -> int:
     from .webserver import FlashService, WebServer
 
     profile = _load_profile_arg(args.profile) if args.profile else None
-    service = FlashService(profile, throttle_kbs=args.throttle)
+    service = FlashService(profile, throttle_kbs=args.throttle, backend=args.backend,
+                           firmware_path=args.firmware, allow_write=args.allow_write)
+    if args.backend != "simulator":
+        print(f"  backend: {args.backend} (real hardware)")
+        if not service.allow_write:
+            print("  real writing is DISABLED (need --firmware + --allow-write and a "
+                  "verified profile); identify works, flashing is gated")
     server = WebServer(service, host=args.host, port=args.port)
     root = server._httpd.static_root  # type: ignore[attr-defined]
     print(f"MED17 Flash Tool web UI on {server.url}")
@@ -630,6 +720,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--size", type=lambda x: int(x, 0), required=True)
     p.add_argument("-o", "--output", required=True)
     p.set_defaults(func=cmd_read)
+
+    # scan
+    p = sub.add_parser("scan", help="read-only ECU reconnaissance (sessions/DIDs/seeds)")
+    add_bus_args(p)
+    p.add_argument("--tx", type=lambda x: int(x, 0), help="override request CAN id")
+    p.add_argument("--rx", type=lambda x: int(x, 0), help="override response CAN id")
+    p.add_argument("--deep", action="store_true",
+                   help="also probe the programming session (0x10 02)")
+    p.add_argument("--read-memory", type=lambda x: int(x, 0), default=None,
+                   help="try a 16-byte readMemoryByAddress at this address")
+    p.add_argument("--emit-profile", help="write a profile skeleton from the scan")
+    p.add_argument("--emit-seeds", help="write the collected seeds to a file")
+    p.set_defaults(func=cmd_scan)
+
+    # capture
+    p = sub.add_parser("capture", help="passively record CAN frames to a candump log")
+    add_bus_args(p)
+    p.add_argument("-o", "--output", default="capture.log")
+    p.add_argument("--seconds", type=float, default=None, help="capture duration (default: until Ctrl+C)")
+    p.add_argument("--analyze", action="store_true", help="quick-analyze the capture when done")
+    p.set_defaults(func=cmd_capture)
 
     # seedkey
     p = sub.add_parser("seedkey", help="compute a key from a seed")
@@ -722,6 +833,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--profile", help="ECU profile (defaults to the C63 demo profile)")
     p.add_argument("--throttle", type=float, default=180.0,
                    help="live flash rate cap in KB/s (0 = unthrottled)")
+    p.add_argument("--backend", default="simulator",
+                   help="CAN backend for real hardware (e.g. socketcan:can0); default: simulator")
+    p.add_argument("--firmware", help="real firmware image to flash (required for real writing)")
+    p.add_argument("--allow-write", action="store_true",
+                   help="permit writing to REAL hardware (needs --backend + --firmware + profile)")
     p.add_argument("--open", action="store_true", help="open the UI in a browser")
     p.set_defaults(func=cmd_webserver)
 

@@ -27,7 +27,15 @@ from .firmware import (
     detect_regions,
     load_firmware,
 )
-from .trace import BusRecorder, TraceReport, analyze as analyze_trace, read_trace
+from .trace import (
+    BusRecorder,
+    LiveCapture,
+    TraceReport,
+    analyze as analyze_trace,
+    capture_frames,
+    read_trace,
+    write_candump,
+)
 from .flash_sequence import (
     FlashProgress,
     FlashResult,
@@ -65,9 +73,12 @@ __all__ = [
     "load_firmware",
     "detect_regions",
     "BusRecorder",
+    "LiveCapture",
     "TraceReport",
     "analyze_trace",
+    "capture_frames",
     "read_trace",
+    "write_candump",
     "Flasher",
     "FlashProgress",
     "FlashResult",
