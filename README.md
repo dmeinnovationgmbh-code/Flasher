@@ -26,7 +26,7 @@ any hardware.
 | **Seed/Key** | Pluggable algorithm framework + reference algorithms + a JSON catalogue + a **solver** that recovers the algorithm from captured seed→key pairs + an HTTP/TCP **seed/key server** |
 | **File server** | Dependency-free HTTP REST firmware repository (upload/list/download/delete + metadata + bearer auth) with a client |
 | **Simulator** | A virtual MED17.7.5 that answers real UDS, including a genuine seed/key challenge and CRC-checked programming |
-| **Front-ends** | A Tkinter desktop GUI and a full-featured CLI |
+| **Front-ends** | A **React (Vite) web UI** (the DME "MED17 Flash Tool" design, wired to the real flash engine via a JSON/SSE API), a Tkinter desktop GUI, and a full-featured CLI |
 
 The **core has no third-party dependencies** — it runs on a stock Python 3.8+.
 Optional adapters (`python-can`, `pyserial`) and YAML profiles (`PyYAML`) light
@@ -89,7 +89,8 @@ med17flasher fileserver     run the firmware file server
 med17flasher simulator      run a stand-alone virtual MED17.7.5
 med17flasher backends       list usable CAN backends and seed/key algorithms
 med17flasher profile        print an ECU profile as JSON
-med17flasher gui            launch the desktop GUI
+med17flasher gui            launch the Tkinter desktop GUI
+med17flasher webserver      serve the React web UI + JSON/SSE API (--open)
 ```
 
 Run `med17flasher <command> --help` for options. Add `-v`/`-vv` for INFO/DEBUG logs.
@@ -110,6 +111,30 @@ python scripts/run_server.py --root ./firmware-repo
 The flasher can offload key computation to the seed/key server
 (`--seedkey-server http://host:8377`) and the GUI's *File Server* tab browses,
 downloads and uploads firmware from the repository.
+
+## Web UI (React)
+
+The `webui/` folder is the DME **MED17 Flash Tool** design (Mercedes-AMG C63 S
+demo) built as a React (Vite) app. It is served by the Python backend and its
+flash view is driven by the **real** flash engine over a JSON/SSE API — the
+progress %, PFLASH sector map, address, KB/s and log lines all come from an
+actual UDS flash of the virtual ECU (throttled to a realistic CAN rate). The
+OTS-Maps purchase flow is **simulated** exactly as designed (no real payment,
+no tuning files).
+
+```bash
+# a prebuilt UI ships in webui/dist, so this just works:
+med17flasher webserver --open          # http://127.0.0.1:8090
+
+# rebuild the UI after changing it:
+cd webui && npm install && npm run build
+
+# or run the Vite dev server (proxies /api to the Python backend on :8090):
+cd webui && npm run dev                 # http://127.0.0.1:5173
+```
+
+See [`docs/WEBUI.md`](docs/WEBUI.md) for the API and how to point the flash view
+at real hardware.
 
 ## Desktop GUI
 

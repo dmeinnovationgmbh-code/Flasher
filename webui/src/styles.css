@@ -1,0 +1,52 @@
+/* Global styles - a 1:1 port of the design handoff's <style> block. */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #F5F5F7;
+  color: #1D1D1F;
+  font-family: 'Titillium Web', -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+
+a { color: #E86E00; text-decoration: none; }
+a:hover { color: #FF7A00; }
+
+button:focus-visible { outline: 2px solid #FF7A00; outline-offset: 2px; border-radius: 8px; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #D1D1D6; border-radius: 4px; }
+
+@keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .3 } }
+@keyframes scan { 0% { transform: translateX(-100%) } 100% { transform: translateX(300%) } }
+@keyframes fadeSlide { from { opacity: 0; transform: translateX(-6px) } to { opacity: 1; transform: translateX(0) } }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+/* Hover/active states that the prototype expressed via style-hover/style-active. */
+.btn-secondary { transition: border-color .15s; }
+.btn-secondary:hover { border-color: rgba(0, 0, 0, .3); }
+
+.btn-primary { transition: background .15s, transform .15s; }
+.btn-primary:hover:not(:disabled) { background: #E86E00 !important; }
+.btn-primary:active:not(:disabled) { transform: scale(.97); }
+
+.btn-buy { transition: background .15s, transform .15s; }
+.btn-buy:active:not(:disabled) { transform: scale(.98); }
+
+.btn-flash-ecu { transition: opacity .15s, transform .15s; }
+.btn-flash-ecu:hover { opacity: .85; }
+.btn-flash-ecu:active { transform: scale(.98); }
+
+.btn-cancel { transition: background .15s; }
+.btn-cancel:hover:not(:disabled) { background: rgba(215, 0, 21, .08) !important; }
+
+.link-action { transition: color .15s; }
+.link-action:hover { color: #FF7A00; }

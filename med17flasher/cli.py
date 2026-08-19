@@ -556,6 +556,33 @@ def cmd_gui(args) -> int:
     return gui_main(args)
 
 
+def cmd_webserver(args) -> int:
+    from .webserver import FlashService, WebServer
+
+    profile = _load_profile_arg(args.profile) if args.profile else None
+    service = FlashService(profile, throttle_kbs=args.throttle)
+    server = WebServer(service, host=args.host, port=args.port)
+    root = server._httpd.static_root  # type: ignore[attr-defined]
+    print(f"MED17 Flash Tool web UI on {server.url}")
+    if root:
+        print(f"  serving built UI from {root}")
+    else:
+        print("  UI not built yet - run: cd webui && npm install && npm run build")
+        print("  (the JSON/SSE API is already live under /api/)")
+    if args.open:
+        import webbrowser
+
+        threading.Timer(0.6, lambda: webbrowser.open(server.url)).start()
+    print("Press Ctrl+C to stop.")
+    try:
+        server.start(block=True)
+    except KeyboardInterrupt:
+        print("\nstopping...")
+    finally:
+        server.stop()
+    return 0
+
+
 # --------------------------------------------------------------------------- #
 # Argument parser
 # --------------------------------------------------------------------------- #
@@ -687,6 +714,16 @@ def build_parser() -> argparse.ArgumentParser:
     # gui
     p = sub.add_parser("gui", help="launch the desktop GUI")
     p.set_defaults(func=cmd_gui)
+
+    # webserver
+    p = sub.add_parser("webserver", help="serve the MED17 Flash Tool web UI + API")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8090)
+    p.add_argument("--profile", help="ECU profile (defaults to the C63 demo profile)")
+    p.add_argument("--throttle", type=float, default=180.0,
+                   help="live flash rate cap in KB/s (0 = unthrottled)")
+    p.add_argument("--open", action="store_true", help="open the UI in a browser")
+    p.set_defaults(func=cmd_webserver)
 
     return parser
 

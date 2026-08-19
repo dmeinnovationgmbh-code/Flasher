@@ -3,8 +3,8 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .eggs/
-build/
-dist/
+/build/
+/dist/
 .pytest_cache/
 .mypy_cache/
 .coverage
