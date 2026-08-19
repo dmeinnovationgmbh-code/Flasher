@@ -6,7 +6,6 @@ import json
 import os
 import tempfile
 
-import pytest
 
 from med17flasher.seedkey import compute_key
 from med17flasher.seedkey.solver import (

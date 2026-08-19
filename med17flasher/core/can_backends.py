@@ -16,7 +16,7 @@ import queue
 import threading
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from ..exceptions import BackendNotAvailableError, TransportError

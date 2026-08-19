@@ -25,11 +25,11 @@ from __future__ import annotations
 import itertools
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence
 
 from ..logging_setup import get_logger
-from .base import compute_key, get_algorithm, list_algorithms
+from .base import compute_key, get_algorithm
 
 log = get_logger("seedkey.solver")
 

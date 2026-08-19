@@ -25,6 +25,19 @@ jobs:
       - name: Run tests
         run: pytest -q
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Pinned so a new ruff release cannot turn a green PR red on its own.
+      - name: Install ruff
+        run: python -m pip install --upgrade pip && pip install "ruff==0.15.8"
+      - name: Lint
+        run: ruff check med17flasher tests
+
   webui:
     runs-on: ubuntu-latest
     steps:

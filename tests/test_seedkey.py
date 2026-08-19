@@ -23,7 +23,6 @@ from med17flasher.seedkey.server import (
     SeedKeyService,
     SeedKeyTcpServer,
 )
-from med17flasher.seedkey.store import SeedKeyEntry
 
 
 SEED = bytes.fromhex("11223344")

@@ -15,7 +15,18 @@ from .base import (
     register,
     register_function,
 )
+from .bridge import SeedKeyBridge, find_python32
 from .dll import DllSeedKey, ExeSeedKey, make_backend
+
+
+from .solver import (
+    SeedKeyPair,
+    SeedKeySolver,
+    SolveResult,
+    load_pairs,
+    load_wordlist,
+)
+from .store import SeedKeyEntry, SeedKeyStore
 
 
 class AlgorithmResolver:
@@ -28,14 +39,6 @@ class AlgorithmResolver:
 
     def compute(self, ecu: str, level: int, seed: bytes) -> bytes:
         return self.algorithm.compute(seed, level=level, params=self.params)
-from .solver import (
-    SeedKeyPair,
-    SeedKeySolver,
-    SolveResult,
-    load_pairs,
-    load_wordlist,
-)
-from .store import SeedKeyEntry, SeedKeyStore
 
 __all__ = [
     "SeedKeyAlgorithm",
@@ -57,4 +60,6 @@ __all__ = [
     "ExeSeedKey",
     "make_backend",
     "AlgorithmResolver",
+    "SeedKeyBridge",
+    "find_python32",
 ]

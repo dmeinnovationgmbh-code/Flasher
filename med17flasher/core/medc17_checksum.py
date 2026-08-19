@@ -364,7 +364,6 @@ def compute_cvn(regions: List[Tuple[int, int]], data: bytes,
     Read-only: reports the CVN for the actual content. Never spoofs it.
     """
 
-    crc = 0
     parts = []
     for start_mem, end_mem in regions:
         sf = canonical(start_mem) - base_mem + base_file

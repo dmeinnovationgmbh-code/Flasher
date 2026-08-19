@@ -156,7 +156,7 @@ class VirtualEcu:
                 continue
             try:
                 response = self._dispatch(request)
-            except Exception as exc:  # noqa: BLE001 - never kill the ECU thread
+            except Exception:  # noqa: BLE001 - never kill the ECU thread
                 log.exception("simulator dispatch error")
                 response = self._nrc(request[0], C.NRC.GENERAL_REJECT)
             if response is not None:

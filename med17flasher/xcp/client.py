@@ -8,7 +8,7 @@ start/stop so live values can be streamed.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Optional
 
 from ..exceptions import XcpNegativeResponseError
 from ..logging_setup import get_logger

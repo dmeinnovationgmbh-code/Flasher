@@ -141,9 +141,79 @@ med17flasher flash --seedkey-dll MED1775_12_42_00.dll ...
 med17flasher flash --seedkey-exe cpcng-seed-key.exe ...
 ```
 
-Because the DLL is 32-bit and Windows-only, the cleanest deployment is to run a
-**seed/key server** on the Windows host (see below) that fronts the DLL, and let
-the flasher run anywhere. See [`MED1775.md`](MED1775.md) for the full flow.
+See [`MED1775.md`](MED1775.md) for the full flow.
+
+## The 32-bit problem — and the automatic bridge
+
+Vendor seed/key DLLs (`MED1775_12_42_00.dll` and friends) are **32-bit Windows
+stdcall** libraries. Windows will not map a 32-bit image into a 64-bit process,
+so loading one from 64-bit Python — which is what the packaged desktop build
+is — fails no matter what:
+
+```
+OSError: [WinError 193] %1 is not a valid Win32 application
+```
+
+`--seedkey-bridge` solves this without any manual setup: the flasher spawns a
+small **32-bit helper process** that loads the DLL and answers key requests over
+a pipe, so a 64-bit app can use a 32-bit DLL transparently.
+
+```bash
+# flash from 64-bit Python using a 32-bit DLL:
+med17flasher flash --seedkey-bridge MED1775_12_42_00.dll firmware.bin
+
+# same for a secure read:
+med17flasher read --secure --seedkey-bridge MED1775_12_42_00.dll -o dump.bin
+
+# or front the 32-bit DLL from the seed/key server:
+med17flasher seedkey-server --bridge MED1775_12_42_00.dll
+```
+
+The 32-bit interpreter is auto-discovered: first the `py` launcher (`py -3-32`),
+then the usual install locations (`C:\Python3*-32\python.exe`,
+`%LOCALAPPDATA%\Programs\Python\Python3*-32\python.exe`, …). Every candidate is
+bitness-checked with `struct.calcsize('P') == 4`. Point at a specific one with
+`--python32 "C:\Python311-32\python.exe"` when you have several installed. If
+none is found you get a clear error instead of the cryptic WinError 193 —
+install the 32-bit build from python.org (it coexists happily with the 64-bit
+one) and make sure `med17flasher` is importable from it (the bridge puts this
+checkout on the child's `PYTHONPATH`; otherwise `pip install med17flasher` into
+the 32-bit interpreter too).
+
+Programmatic use — it satisfies the same `compute(ecu, level, seed)` resolver
+interface as everything else, and is a context manager:
+
+```python
+from med17flasher.seedkey import SeedKeyBridge
+
+with SeedKeyBridge("MED1775_12_42_00.dll") as bridge:
+    print(bridge.info())          # {'ecu_name': ..., 'seed_length': 4, 'bits': 32, ...}
+    key = bridge.compute("MED17.7.5", 0x05, bytes.fromhex("183fd11c"))
+```
+
+Under the hood the parent and the helper exchange one JSON object per line over
+stdin/stdout:
+
+| direction | message |
+|-----------|---------|
+| → | `{"cmd": "key", "level": 5, "seed": "183fd11c"}` |
+| ← | `{"ok": true, "key": "0a1b2c3d"}` |
+| → | `{"cmd": "info"}` |
+| ← | `{"ok": true, "info": {"ecu_name": "...", "seed_length": 4, "key_length": 4, "access_types": [5], "bits": 32}}` |
+| → | `{"cmd": "quit"}` |
+| ← | `{"ok": true}` |
+| ← | `{"ok": false, "error": "..."}` on any failure |
+
+The helper is `python -m med17flasher.seedkey.bridge --dll PATH [--options STR]`,
+which you can also run by hand to debug a DLL. It is started lazily on the first
+key request and reused for the whole session; replies are deadline-enforced
+(`timeout=`, 10 s by default) so a wedged DLL cannot hang a flash, and if the
+helper dies its stderr is included in the `SeedKeyError`. On Windows it is
+launched with `CREATE_NO_WINDOW`, so no console window flashes up.
+
+The older route still works and remains the right answer when the DLL lives on a
+*different* machine: run a **seed/key server** on the Windows host (see below)
+that fronts the DLL, and let the flasher run anywhere.
 
 ## The seed/key server
 

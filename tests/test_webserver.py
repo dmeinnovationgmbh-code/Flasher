@@ -69,7 +69,6 @@ def test_live_flash_stream(service):
     assert service.start_flash() is False
 
     events = []
-    deadline_events = 0
     import time
 
     end = time.time() + 30
@@ -270,6 +269,85 @@ def test_expert_endpoints_over_http():
             {"profileId": "med17_7_5_demo", "backend": "simulator"}).encode())
         assert cfg["ready"] is True
         assert get("/api/expert")["profileId"] == "med17_7_5_demo"
+
+
+def test_scan_reports_ecu(service):
+    rep = service.scan()
+    assert rep["online"] is True
+    assert rep["txId"].startswith("0x")
+    assert rep["identification"], "scan should read at least one DID"
+    assert rep["programmingLevel"] is not None
+
+
+def test_read_memory_and_guards(service):
+    out = service.read_memory(0x80008000, 16)
+    assert out["size"] == 16
+    assert len(out["hex"]) == 32
+    assert out["crc32"].startswith("0x")
+    for bad in (0, -1, 0x20000):
+        with pytest.raises(ValueError):
+            service.read_memory(0x80008000, bad)
+
+
+def test_checksum_requires_firmware(service):
+    with pytest.raises(ValueError):
+        service.checksum_report()
+    with pytest.raises(ValueError):
+        service.checksum_correct()
+
+
+def test_checksum_report_on_upload(service):
+    service.set_firmware("cal.bin", bytes(0x1000))
+    rep = service.checksum_report()
+    assert rep["name"] == "cal.bin"
+    # A blank calibration has no MEDC17 descriptor blocks; that must not error.
+    assert rep["blocks"] == 0
+    assert rep["regions"] == []
+
+
+def test_measurement_streams_samples(service):
+    sub = service.subscribe()
+    assert service.start_measure(rate=100) is True
+    assert service.start_measure() is False       # already running
+    events = _drain(sub, kinds=("sample",), timeout=10)
+    # let a few more arrive, then stop
+    import time as _t
+
+    _t.sleep(0.4)
+    service.stop_measure()
+    _t.sleep(0.4)
+    service.unsubscribe(sub)
+
+    assert any(e["type"] == "sample" for e in events)
+    sample = next(e for e in events if e["type"] == "sample")
+    assert {"rpm", "coolant", "battery"} <= set(sample["values"])
+    csv = service.measure_csv()
+    assert csv.splitlines()[0] == "time_s,rpm,coolant,battery"
+    assert len(csv.splitlines()) > 1
+    assert service.measure_config()["running"] is False
+
+
+def test_measurement_rejects_bad_signal(service):
+    with pytest.raises(ValueError):
+        service.start_measure(signals=["this-is-not-a-spec"])
+
+
+def test_diagnostic_endpoints_over_http():
+    svc = FlashService(throttle_kbs=0)
+    with WebServer(svc, port=0) as srv:
+        host, port = srv.address
+        base = f"http://{host}:{port}"
+
+        def get(path):
+            with urllib.request.urlopen(base + path, timeout=30) as r:
+                return r.read()
+
+        assert json.loads(get("/api/scan"))["online"] is True
+        mem = json.loads(get("/api/memory?address=0x80008000&size=32"))
+        assert mem["size"] == 32
+        assert json.loads(get("/api/measure"))["running"] is False
+        # CSV export is served as a downloadable file even when empty.
+        assert get("/api/measure/csv").startswith(b"time_s")
 
 
 def test_http_endpoints():

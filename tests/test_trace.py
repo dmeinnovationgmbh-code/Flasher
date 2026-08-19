@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import tempfile
 
-import pytest
 
 from med17flasher.core import (
     Flasher,
@@ -138,7 +137,7 @@ def test_extracted_pairs_feed_solver(demo_profile):
     # With a randomised-seed ECU we get several distinct pairs -> the solver can
     # unambiguously recover the algorithm from the trace.
     net = VirtualCanNetwork()
-    recorder = BusRecorder(net)
+    BusRecorder(net)  # attaches to the network; frames are read back below
     ecu = VirtualEcu(
         net.new_endpoint("ecu"), demo_profile,
         VirtualEcuConfig(security_algorithm="med17",

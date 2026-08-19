@@ -40,6 +40,8 @@ export default function App() {
   const [logs, setLogs] = useState([])
   const [autoscroll, setAutoscroll] = useState(true)
   const [tab, setTab] = useState('flash')
+  const [samples, setSamples] = useState([])
+  const [measureMeta, setMeasureMeta] = useState(null)
   const logRef = useRef(null)
 
   // initial load + telemetry polling
@@ -76,6 +78,18 @@ export default function App() {
         })
       } else if (ev.type === 'log') {
         setLogs((ls) => ls.concat([{ time: nowTime(), cls: ev.cls, msg: ev.msg }]))
+      } else if (ev.type === 'sample') {
+        // Keep a bounded window so a long measurement can't grow without limit.
+        setSamples((s) => (s.length > 600 ? s.slice(-500) : s).concat([ev]))
+      } else if (ev.type === 'measure') {
+        if (ev.event === 'started') {
+          setSamples([])
+          setMeasureMeta({ running: true, signals: ev.signals, mode: ev.mode, backend: ev.backend })
+        } else if (ev.event === 'stopped') {
+          setMeasureMeta((m) => (m ? { ...m, running: false } : m))
+        } else if (ev.event === 'error') {
+          setMeasureMeta((m) => ({ ...(m || {}), running: false, error: ev.msg }))
+        }
       } else if (ev.type === 'done') {
         setFlash((f) => ({
           ...f, running: false, done: true, pct: 100,
@@ -102,6 +116,30 @@ export default function App() {
   }
   const abortFlash = () => api.abortFlash().catch(() => {})
 
+  // Export the protocol pane as a text file (the "Exportieren" action).
+  const exportLog = () => {
+    const text = logs.map((l) => `${l.time}\t${l.msg}`).join('\n')
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'med17-protokoll.txt'
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
+  // Replace the placeholder vehicle data with what the ECU actually reports.
+  const applyIdent = (dids) => {
+    const pick = (needle) => dids.find((d) =>
+      (d.name || '').toLowerCase().includes(needle))?.value
+    setVehicle((v) => ({
+      ...v,
+      vin: pick('vin') || v.vin,
+      swNumber: pick('sw number') || pick('sw version') || v.swNumber,
+      hwNumber: pick('hw number') || pick('hw version') || v.hwNumber,
+      identified: true,
+    }))
+  }
+
   const buy = (m) => {
     if (buying[m.id]) return
     setBuying((b) => ({ ...b, [m.id]: true }))
@@ -127,7 +165,8 @@ export default function App() {
       <Header voltText={volt.toFixed(1) + ' V'} bus={vehicle.connection.bus} />
 
       <VehicleBar vehicle={vehicle} running={running}
-        writeLabel={running ? 'Läuft …' : 'Schreiben'} onWrite={() => startFlash(null)} />
+        writeLabel={running ? 'Läuft …' : 'Schreiben'} onWrite={() => startFlash(null)}
+        onRead={() => setTab('diag')} />
 
       <TabBar tab={tab} setTab={setTab} mapCount={maps.length} />
 
@@ -136,21 +175,25 @@ export default function App() {
         maxWidth: 1180, margin: '0 auto', padding: '14px 22px 56px', alignItems: 'start',
       }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0 }}>
-          {tab === 'flash' ? (
+          {tab === 'flash' && (
             <>
               <ExpertSection running={running} />
               <WriteSection flash={flash} p={p} badgeText={badgeText} badgeColor={badgeColor}
                 running={running} onAbort={abortFlash} file={vehicle.file} />
               <LogSection logs={logs} logRef={logRef} autoscroll={autoscroll}
-                onToggle={() => setAutoscroll((a) => !a)} />
+                onToggle={() => setAutoscroll((a) => !a)} onExport={exportLog} />
             </>
-          ) : (
+          )}
+          {tab === 'measure' && <MeasureSection samples={samples} meta={measureMeta} />}
+          {tab === 'diag' && <DiagSection onIdentified={applyIdent} />}
+          {tab === 'maps' && (
             <MapsSection maps={maps} addons={addons} setAddons={setAddons}
-              buying={buying} unlocked={unlocked} onBuy={buy} onFlash={(id) => { setTab('flash'); startFlash(id) }} />
+              buying={buying} unlocked={unlocked} onBuy={buy}
+              onFlash={(id) => { setTab('flash'); startFlash(id) }} />
           )}
         </div>
 
-        <Sidebar vehicle={vehicle} />
+        <Sidebar vehicle={vehicle} onTool={(k) => setTab(k)} />
       </main>
     </>
   )
@@ -158,9 +201,14 @@ export default function App() {
 
 /* ---------------------------------------------------------------- TabBar */
 function TabBar({ tab, setTab, mapCount }) {
-  const tabs = [['flash', 'Flashen'], ['maps', `OTS-Maps${mapCount ? ' · ' + mapCount : ''}`]]
+  const tabs = [
+    ['flash', 'Flashen'],
+    ['measure', 'Messen'],
+    ['diag', 'Diagnose'],
+    ['maps', `OTS-Maps${mapCount ? ' · ' + mapCount : ''}`],
+  ]
   return (
-    <div style={{ maxWidth: 1180, margin: '0 auto', padding: '0 22px', display: 'flex', gap: 6 }}>
+    <div style={{ maxWidth: 1180, margin: '0 auto', padding: '0 22px', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
       {tabs.map(([k, label]) => {
         const on = tab === k
         return (
@@ -204,7 +252,7 @@ function Header({ voltText, bus }) {
 }
 
 /* ------------------------------------------------------------ VehicleBar */
-function VehicleBar({ vehicle, running, writeLabel, onWrite }) {
+function VehicleBar({ vehicle, running, writeLabel, onWrite, onRead }) {
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 24, flexWrap: 'wrap', maxWidth: 1180, margin: '0 auto', padding: '34px 22px 24px' }}>
       <div style={{ minWidth: 0 }}>
@@ -219,7 +267,7 @@ function VehicleBar({ vehicle, running, writeLabel, onWrite }) {
         </div>
       </div>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-        <button className="btn-secondary" style={{ padding: '10px 22px', borderRadius: 9, background: '#FFFFFF', border: '1px solid rgba(0,0,0,.12)', fontSize: 14, fontWeight: 600 }}>Lesen</button>
+        <button className="btn-secondary" onClick={onRead} style={{ padding: '10px 22px', borderRadius: 9, background: '#FFFFFF', border: '1px solid rgba(0,0,0,.12)', fontSize: 14, fontWeight: 600 }}>Lesen</button>
         <button className="btn-primary" onClick={onWrite} disabled={running}
           style={{ padding: '10px 24px', borderRadius: 9, background: ACCENT, color: '#FFFFFF', fontSize: 14, fontWeight: 700, letterSpacing: '.01em', boxShadow: '0 4px 12px -4px rgba(255,122,0,.5)' }}>
           {writeLabel}
@@ -294,7 +342,6 @@ function WriteSection({ flash, p, badgeText, badgeColor, running, onAbort, file 
         <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
           <button className="btn-cancel" onClick={onAbort} disabled={!running}
             style={{ padding: '8px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'rgba(0,0,0,.05)', color: running ? '#D70015' : FAINT }}>Abbrechen</button>
-          <button disabled style={{ padding: '8px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'rgba(0,0,0,.03)', color: FAINT }}>Recovery</button>
         </div>
       </div>
     </section>
@@ -553,8 +600,292 @@ function ExpertSection({ running }) {
   )
 }
 
+/* --------------------------------------------------------- MeasureSection */
+const SERIES_COLORS = [ACCENT, '#0A84FF', GREEN, '#AF52DE', '#FF375F', '#FFB300']
+
+function Sparkline({ points, color, height = 54 }) {
+  if (points.length < 2) {
+    return <div style={{ height, display: 'grid', placeItems: 'center', fontSize: 11, color: FAINT }}>—</div>
+  }
+  const lo = Math.min(...points)
+  const hi = Math.max(...points)
+  const span = hi - lo || 1
+  const step = 100 / (points.length - 1)
+  const d = points
+    .map((v, i) => `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(2)},${(100 - ((v - lo) / span) * 100).toFixed(2)}`)
+    .join(' ')
+  return (
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none"
+      style={{ width: '100%', height, display: 'block' }}>
+      <path d={d} fill="none" stroke={color} strokeWidth="2"
+        vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function MeasureSection({ samples, meta }) {
+  const [backend, setBackend] = useState('simulator')
+  const [backends, setBackends] = useState([])
+  const [rate, setRate] = useState(10)
+  const [daq, setDaq] = useState(false)
+  const [specs, setSpecs] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+
+  useEffect(() => {
+    api.getBackends().then((d) => setBackends(d.backends || [])).catch(() => {})
+    api.getMeasure().then((c) => {
+      setSpecs((c.signals || []).join('\n'))
+      setBackend(c.backend || 'simulator')
+      setRate(c.rate || 10)
+    }).catch(() => {})
+  }, [])
+
+  const running = !!meta?.running
+  const names = (meta?.signals || []).map((s) => s.name)
+  const units = Object.fromEntries((meta?.signals || []).map((s) => [s.name, s.unit || '']))
+  const latest = samples.length ? samples[samples.length - 1] : null
+
+  const start = async () => {
+    setBusy(true); setErr(null)
+    try {
+      const list = specs.split('\n').map((s) => s.trim()).filter(Boolean)
+      const r = await api.startMeasure({ signals: list, backend, rate: Number(rate), daq })
+      if (!r.started) setErr(r.error || 'Messung läuft bereits.')
+    } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
+  }
+  const stop = () => api.stopMeasure().catch(() => {})
+
+  return (
+    <>
+      <section style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px 0' }}>
+          <span style={{ fontSize: 16, fontWeight: 700 }}>Messen · XCP</span>
+          <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: running ? ACCENT_DARK : MUTED }}>
+            {running && <span style={{ width: 7, height: 7, borderRadius: '50%', background: ACCENT, animation: 'pulse 1.2s ease-in-out infinite' }} />}
+            {running ? `Läuft · ${meta.mode === 'daq' ? 'DAQ' : 'Polling'}` : 'Bereit'}
+          </span>
+        </div>
+        <div style={{ padding: '4px 20px 0', fontSize: 12, color: MUTED }}>
+          Live-Werte aus dem Steuergerät lesen und aufzeichnen. Signale als <code>name@0xAdresse:typ:faktor:offset:einheit</code>, eines pro Zeile.
+        </div>
+        <div style={{ padding: '16px 20px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={fieldLabel}>Verbindung</label>
+              <select style={inputStyle} value={backend} disabled={running}
+                onChange={(e) => setBackend(e.target.value)}>
+                {backends.map((b) => (
+                  <option key={b.id} value={b.id} disabled={!b.available}>
+                    {b.name}{b.available ? '' : ' (nicht verfügbar)'}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={fieldLabel}>Rate (Hz)</label>
+              <input style={inputStyle} type="number" min="1" max="200" value={rate}
+                disabled={running || daq} onChange={(e) => setRate(e.target.value)} />
+            </div>
+            <div>
+              <label style={fieldLabel}>Modus</label>
+              <select style={inputStyle} value={daq ? 'daq' : 'poll'} disabled={running}
+                onChange={(e) => setDaq(e.target.value === 'daq')}>
+                <option value="poll">Polling</option>
+                <option value="daq">DAQ (Streaming)</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label style={fieldLabel}>Signale</label>
+            <textarea style={{ ...inputStyle, minHeight: 78, fontFamily: MONO, fontSize: 12 }}
+              value={specs} disabled={running} onChange={(e) => setSpecs(e.target.value)}
+              placeholder="rpm@0x2000:u16&#10;coolant@0x2002:s16:0.1:-40:degC" />
+          </div>
+          {err && <div style={{ fontSize: 12, color: '#D70015' }}>{err}</div>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button onClick={running ? stop : start} disabled={busy}
+              style={{ padding: '10px 22px', borderRadius: 9, fontSize: 14, fontWeight: 700, color: '#fff', background: running ? '#D70015' : ACCENT, boxShadow: running ? 'none' : '0 4px 12px -4px rgba(255,122,0,.5)' }}>
+              {running ? 'Stoppen' : 'Messung starten'}
+            </button>
+            <a href={api.measureCsvUrl()} download="messung.csv"
+              style={{ padding: '9px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'rgba(0,0,0,.05)', color: samples.length ? '#1D1D1F' : FAINT, textDecoration: 'none', pointerEvents: samples.length ? 'auto' : 'none' }}>
+              CSV exportieren
+            </a>
+            <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11.5, color: FAINT }}>
+              {samples.length} Messpunkte
+            </span>
+          </div>
+        </div>
+      </section>
+
+      {names.length > 0 && (
+        <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 14 }}>
+          {names.map((n, i) => {
+            const color = SERIES_COLORS[i % SERIES_COLORS.length]
+            const series = samples.map((s) => s.values[n]).filter((v) => typeof v === 'number')
+            const val = latest?.values?.[n]
+            return (
+              <div key={n} style={{ ...cardStyle, padding: '14px 16px 8px' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: MUTED }}>{n}</span>
+                  <span style={{ marginLeft: 'auto', fontFamily: "'Titillium Web',sans-serif", fontSize: 26, fontWeight: 700, letterSpacing: '-.02em', fontVariantNumeric: 'tabular-nums', color }}>
+                    {typeof val === 'number' ? val.toFixed(2) : '—'}
+                  </span>
+                  <span style={{ fontSize: 11.5, color: FAINT }}>{units[n]}</span>
+                </div>
+                <Sparkline points={series.slice(-160)} color={color} />
+              </div>
+            )
+          })}
+        </section>
+      )}
+    </>
+  )
+}
+
+/* ------------------------------------------------------------ DiagSection */
+function DiagSection({ onIdentified }) {
+  const [report, setReport] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  const [addr, setAddr] = useState('0x80008000')
+  const [size, setSize] = useState(256)
+  const [mem, setMem] = useState(null)
+  const [cks, setCks] = useState(null)
+
+  const run = async (fn, set) => {
+    setBusy(true); setErr(null)
+    try { set(await fn()) } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
+  }
+  const scan = () => run(() => api.scanEcu(false), (r) => {
+    setReport(r)
+    if (r.identification?.length) onIdentified(r.identification)
+  })
+  const readMem = () => run(() => api.readMemory(addr, Number(size)), setMem)
+  const checksum = () => run(() => api.getChecksum(), setCks)
+  const fixChecksum = () => run(async () => {
+    await api.correctChecksum()
+    return api.getChecksum()
+  }, setCks)
+
+  const row = (a, b, mono) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '7px 0', borderBottom: '1px solid rgba(0,0,0,.05)' }}>
+      <span style={{ fontSize: 12.5, color: MUTED }}>{a}</span>
+      <span style={{ fontSize: 12.5, fontFamily: mono ? MONO : 'inherit', textAlign: 'right', wordBreak: 'break-all' }}>{b}</span>
+    </div>
+  )
+
+  return (
+    <>
+      <section style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px 0' }}>
+          <span style={{ fontSize: 16, fontWeight: 700 }}>Diagnose · Steuergerät auslesen</span>
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: FAINT }}>nur lesend</span>
+        </div>
+        <div style={{ padding: '4px 20px 0', fontSize: 12, color: MUTED }}>
+          Sitzungen, Identifikation (Teilenummern, VIN) und Security-Access-Level ermitteln. Schreibt nichts ins Steuergerät.
+        </div>
+        <div style={{ padding: '16px 20px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <button onClick={scan} disabled={busy}
+              style={{ padding: '10px 22px', borderRadius: 9, fontSize: 14, fontWeight: 700, color: '#fff', background: busy ? 'rgba(0,0,0,.15)' : ACCENT }}>
+              {busy ? 'Läuft …' : 'Steuergerät scannen'}
+            </button>
+            {report && (
+              <span style={{ fontSize: 12.5, color: report.online ? GREEN : '#D70015', fontWeight: 500 }}>
+                {report.online ? `Online · ${report.txId}/${report.rxId}` : 'Keine Antwort'}
+              </span>
+            )}
+          </div>
+          {err && <div style={{ fontSize: 12, color: '#D70015' }}>{err}</div>}
+          {report && (
+            <div>
+              {row('Sitzungen', report.sessions.join(', ') || '—', true)}
+              {row('Programmier-Level', report.programmingLevel || 'nicht gefunden', true)}
+              {report.identification.map((d) => row(d.name || d.did, d.value || '—', true))}
+              {report.seeds.map((s) => row(`Seed ${s.level}`, s.info, true))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section style={cardStyle}>
+        <div style={{ padding: '16px 20px 0', fontSize: 16, fontWeight: 700 }}>Speicher lesen</div>
+        <div style={{ padding: '14px 20px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 12, alignItems: 'end' }}>
+            <div>
+              <label style={fieldLabel}>Adresse</label>
+              <input style={{ ...inputStyle, fontFamily: MONO }} value={addr}
+                onChange={(e) => setAddr(e.target.value)} />
+            </div>
+            <div>
+              <label style={fieldLabel}>Bytes</label>
+              <input style={inputStyle} type="number" min="1" max="65536" value={size}
+                onChange={(e) => setSize(e.target.value)} />
+            </div>
+            <button onClick={readMem} disabled={busy}
+              style={{ padding: '9px 20px', borderRadius: 8, fontSize: 13.5, fontWeight: 600, background: 'rgba(0,0,0,.06)' }}>Auslesen</button>
+          </div>
+          {mem && (
+            <>
+              <div style={{ fontFamily: MONO, fontSize: 11.5, color: MUTED }}>
+                {mem.address} · {mem.size} B · CRC32 {mem.crc32}
+              </div>
+              <div style={{ background: '#F5F5F7', borderRadius: 10, padding: '10px 12px', fontFamily: MONO, fontSize: 11, lineHeight: 1.7, maxHeight: 190, overflow: 'auto', wordBreak: 'break-all' }}>
+                {(mem.hex.match(/.{1,32}/g) || []).map((line, i) => (
+                  <div key={i}>
+                    <span style={{ color: FAINT }}>{(i * 16).toString(16).padStart(4, '0')}  </span>
+                    {(line.match(/.{1,2}/g) || []).join(' ')}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </section>
+
+      <section style={cardStyle}>
+        <div style={{ padding: '16px 20px 0', fontSize: 16, fontWeight: 700 }}>Prüfsummen (MEDC17)</div>
+        <div style={{ padding: '4px 20px 0', fontSize: 12, color: MUTED }}>
+          Prüft die interne Flash-Prüfsummen der im Flashen-Tab geladenen Datei und kann sie korrigieren.
+        </div>
+        <div style={{ padding: '14px 20px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={checksum} disabled={busy}
+              style={{ padding: '9px 20px', borderRadius: 8, fontSize: 13.5, fontWeight: 600, background: 'rgba(0,0,0,.06)' }}>Prüfen</button>
+            {(() => {
+              // Only offer a correction when blocks were actually found and at
+              // least one of them is wrong.
+              const fixable = !!cks && cks.blocks > 0 && cks.allOk === false
+              return (
+                <button onClick={fixChecksum} disabled={busy || !fixable}
+                  style={{ padding: '9px 20px', borderRadius: 8, fontSize: 13.5, fontWeight: 600, color: '#fff', background: fixable ? GREEN : 'rgba(0,0,0,.15)' }}>Korrigieren</button>
+              )
+            })()}
+          </div>
+          {cks && (
+            <div>
+              {row('Datei', cks.name)}
+              {row('Regionen', String(cks.blocks))}
+              {cks.regions.map((r, i) => row(
+                `${r.start}–${r.end} (${r.algorithm})`,
+                r.ok ? '✓ ok' : `✗ ${r.computed} ≠ ${r.target}`, true))}
+              {cks.blocks === 0 && (
+                <div style={{ fontSize: 12, color: MUTED, paddingTop: 8 }}>
+                  Keine MEDC17-Prüfsummenblöcke gefunden — bei einer reinen Kalibrierdatei ist das normal.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+    </>
+  )
+}
+
 /* ------------------------------------------------------------- LogSection */
-function LogSection({ logs, logRef, autoscroll, onToggle }) {
+function LogSection({ logs, logRef, autoscroll, onToggle, onExport }) {
   return (
     <section style={cardStyle}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '14px 20px' }}>
@@ -563,7 +894,8 @@ function LogSection({ logs, logRef, autoscroll, onToggle }) {
           Autoscroll
           <Switch on={autoscroll} onColor="#34C759" w={34} />
         </button>
-        <button className="link-action" style={{ fontSize: 13, fontWeight: 500, color: ACCENT_DARK }}>Exportieren</button>
+        <button className="link-action" onClick={onExport} disabled={!logs.length}
+          style={{ fontSize: 13, fontWeight: 500, color: logs.length ? ACCENT_DARK : FAINT }}>Exportieren</button>
       </div>
       <div style={{ padding: '0 12px 12px' }}>
         <div ref={logRef} style={{ background: '#F5F5F7', borderRadius: 12, fontFamily: MONO, fontSize: 11.5, lineHeight: 1.8, height: 186, overflowY: 'auto', overflowX: 'hidden', padding: '12px 14px', fontVariantNumeric: 'tabular-nums' }}>
@@ -580,7 +912,7 @@ function LogSection({ logs, logRef, autoscroll, onToggle }) {
 }
 
 /* ---------------------------------------------------------------- Sidebar */
-function Sidebar({ vehicle }) {
+function Sidebar({ vehicle, onTool }) {
   const c = vehicle.connection
   const infoCard = { ...cardStyle, padding: '6px 18px' }
   const row = (label, value, valueStyle) => (
@@ -619,11 +951,11 @@ function Sidebar({ vehicle }) {
 
       <section style={infoCard}>
         <div style={{ fontSize: 13, fontWeight: 600, color: MUTED, padding: '12px 0 4px' }}>Werkzeuge</div>
-        <ToolRow bg="rgba(255,122,0,.12)" label="Virtual Read"
+        <ToolRow bg="rgba(255,122,0,.12)" label="Speicher lesen" onClick={() => onTool('diag')}
           icon={<g><circle cx="12" cy="12" r="9" /><path d="M8 12l3 3 5-6" /></g>} stroke={ACCENT_DARK} />
-        <ToolRow bg="rgba(52,199,89,.14)" label="Prüfsumme korrigieren"
+        <ToolRow bg="rgba(52,199,89,.14)" label="Prüfsumme korrigieren" onClick={() => onTool('diag')}
           icon={<g><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z" /><path d="M9 12l2 2 4-4" /></g>} stroke={GREEN} />
-        <ToolRow last bg="rgba(0,0,0,.06)" label="Original-Datei laden"
+        <ToolRow last bg="rgba(0,0,0,.06)" label="Firmware laden" onClick={() => onTool('flash')}
           icon={<g><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></g>} stroke="#1D1D1F" />
       </section>
 
@@ -634,9 +966,9 @@ function Sidebar({ vehicle }) {
   )
 }
 
-function ToolRow({ bg, label, icon, stroke, last }) {
+function ToolRow({ bg, label, icon, stroke, last, onClick }) {
   return (
-    <button style={{ display: 'flex', alignItems: 'center', gap: 11, padding: last ? '9px 0 14px' : '9px 0', borderBottom: last ? 'none' : '1px solid rgba(0,0,0,.05)', width: '100%', textAlign: 'left' }}>
+    <button onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: last ? '9px 0 14px' : '9px 0', borderBottom: last ? 'none' : '1px solid rgba(0,0,0,.05)', width: '100%', textAlign: 'left' }}>
       <span style={{ width: 27, height: 27, borderRadius: 7, background: bg, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
         <svg viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ width: 14, height: 14 }}>{icon}</svg>
       </span>

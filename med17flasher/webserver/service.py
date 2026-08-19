@@ -150,6 +150,16 @@ class FlashService:
         self._expert_allow_write = False
         self._uploaded: Optional[Dict[str, Any]] = None
 
+        # Measurement (XCP) state
+        self._measure_thread: Optional[threading.Thread] = None
+        self._measure_stop = threading.Event()
+        self._measure_rows: List[dict] = []
+        self._measure_specs: List[str] = []
+        self._measure_backend = "simulator"
+        self._measure_rate = 10.0
+        self._measure_cro = 0x7E0
+        self._measure_dto = 0x7E1
+
     # ------------------------------------------------------------------ #
     # Vehicle / maps / telemetry
     # ------------------------------------------------------------------ #
@@ -202,6 +212,253 @@ class FlashService:
             return out
         finally:
             close()
+
+    # ------------------------------------------------------------------ #
+    # Diagnostics: scan, memory read, checksum tool
+    # ------------------------------------------------------------------ #
+    def _diag_target(self):
+        """The profile/backend diagnostics run against (expert if configured)."""
+
+        prof = self._expert_profile or self.profile
+        backend = self._expert_backend if self._expert_profile else self.backend
+        is_sim = backend == "simulator"
+        return prof, backend, is_sim
+
+    def scan(self, *, deep: bool = False) -> dict:
+        """Read-only ECU reconnaissance (sessions, DIDs, seeds). Never writes."""
+
+        from ..recon import EcuScanner
+
+        prof, backend, is_sim = self._diag_target()
+        uds, close = self._open_session(prof, backend, is_sim)
+        try:
+            scanner = EcuScanner(uds, prof.can.tx_id, prof.can.rx_id)
+            report = scanner.scan(probe_programming_session=deep)
+            return {
+                "online": report.online,
+                "txId": f"0x{report.tx_id:03X}",
+                "rxId": f"0x{report.rx_id:03X}",
+                "sessions": [f"0x{s:02X}" for s in report.sessions_supported],
+                "identification": [
+                    {"did": f"0x{did:04X}",
+                     "name": report.identification_names.get(did, ""),
+                     "value": val.decode("latin-1", "replace").strip("\x00 ")}
+                    for did, val in report.identification.items()
+                ],
+                "seeds": [{"level": f"0x{lvl:02X}", "info": info}
+                          for lvl, info in report.seeds.items()],
+                "programmingLevel": (
+                    f"0x{report.programming_security_level():02X}"
+                    if report.programming_security_level() is not None else None),
+                "notes": report.notes,
+                "backend": backend,
+            }
+        finally:
+            close()
+
+    def read_memory(self, address: int, size: int) -> dict:
+        """Read a memory range from the ECU (read-only 'Lesen')."""
+
+        if size <= 0 or size > 0x10000:
+            raise ValueError("Größe muss zwischen 1 und 65536 Bytes liegen")
+        prof, backend, is_sim = self._diag_target()
+        uds, close = self._open_session(prof, backend, is_sim)
+        try:
+            try:
+                uds.enter_extended_session()
+            except Exception:  # noqa: BLE001 - some ECUs read in the default session
+                pass
+            data = uds.read_memory_by_address(address, size)
+            from ..core import checksum as _cs
+
+            return {
+                "address": f"0x{address:08X}",
+                "size": len(data),
+                "hex": data.hex(),
+                "crc32": f"0x{_cs.compute('crc32', data):08X}",
+            }
+        finally:
+            close()
+
+    def checksum_report(self) -> dict:
+        """Verify (and optionally correct) MEDC17 checksums of the upload."""
+
+        from ..core import medc17_checksum as mc
+
+        if not self._uploaded:
+            raise ValueError("keine Firmware geladen")
+        data = self._uploaded["raw"]
+        results = mc.verify(data)
+        return {
+            "name": self._uploaded["name"],
+            "blocks": len(results),
+            "regions": [
+                {"start": f"0x{r.region.start_mem:08X}",
+                 "end": f"0x{r.region.end_mem:08X}",
+                 "algorithm": r.region.algo_name,
+                 "computed": f"0x{r.computed:08X}",
+                 "target": f"0x{r.target:08X}",
+                 "ok": bool(r.ok)}
+                for r in results
+            ],
+            "allOk": all(r.ok for r in results) if results else None,
+        }
+
+    def checksum_correct(self) -> dict:
+        """Correct the uploaded firmware's checksums in place (keeps it loaded)."""
+
+        from ..core import medc17_checksum as mc
+
+        if not self._uploaded:
+            raise ValueError("keine Firmware geladen")
+        fixed, results = mc.correct(self._uploaded["raw"])
+        self._uploaded["raw"] = bytes(fixed)
+        self._uploaded["size"] = len(fixed)
+        self._uploaded["image0"] = _parse_firmware_bytes(
+            self._uploaded["name"], self._uploaded["raw"], base_address=0)
+        self._broadcast({"type": "log", "cls": "ok",
+                         "msg": f"Prüfsummen korrigiert · {len(results)} Region(en)"})
+        return {"corrected": len(results), "firmware": self.firmware_summary()}
+
+    # ------------------------------------------------------------------ #
+    # Measurement (XCP): live values streamed to the UI
+    # ------------------------------------------------------------------ #
+    DEMO_SIGNALS = [
+        "rpm@0x2000:u16:1:0:1/min",
+        "coolant@0x2002:s16:0.1:-40:degC",
+        "battery@0x2004:u16:0.001:0:V",
+    ]
+
+    @property
+    def measuring(self) -> bool:
+        return self._measure_thread is not None and self._measure_thread.is_alive()
+
+    def measure_config(self) -> dict:
+        return {
+            "running": self.measuring,
+            "signals": list(self._measure_specs or self.DEMO_SIGNALS),
+            "backend": self._measure_backend,
+            "cro": f"0x{self._measure_cro:03X}",
+            "dto": f"0x{self._measure_dto:03X}",
+            "rate": self._measure_rate,
+            "samples": len(self._measure_rows),
+        }
+
+    def start_measure(self, *, signals: Optional[List[str]] = None,
+                      backend: Optional[str] = None, rate: float = 10.0,
+                      cro: Optional[int] = None, dto: Optional[int] = None,
+                      use_daq: bool = False) -> bool:
+        """Start streaming live XCP values to SSE subscribers."""
+
+        from ..xcp import parse_signal
+
+        if self.measuring:
+            return False
+        specs = [s for s in (signals or self._measure_specs or self.DEMO_SIGNALS) if s]
+        parsed = [parse_signal(s) for s in specs]   # validates up front
+        self._measure_specs = specs
+        self._measure_backend = backend or self._measure_backend
+        self._measure_rate = float(rate)
+        if cro is not None:
+            self._measure_cro = int(cro)
+        if dto is not None:
+            self._measure_dto = int(dto)
+        self._measure_rows = []
+        self._measure_stop = threading.Event()
+        self._measure_thread = threading.Thread(
+            target=self._run_measure, args=(parsed, use_daq), daemon=True)
+        self._measure_thread.start()
+        return True
+
+    def stop_measure(self) -> None:
+        self._measure_stop.set()
+
+    def measure_csv(self) -> str:
+        """The captured samples as CSV text (for the UI's export button)."""
+
+        rows = list(self._measure_rows)
+        names = [s.split("@")[0] for s in (self._measure_specs or self.DEMO_SIGNALS)]
+        out = ["time_s," + ",".join(names)]
+        for r in rows:
+            out.append(f"{r['t']:.4f}," + ",".join(
+                str(r["values"].get(n, "")) for n in names))
+        return "\n".join(out) + "\n"
+
+    def _open_xcp(self, backend: str):
+        """Return (client, close). The simulator gets an in-process XCP slave."""
+
+        import math
+
+        from ..xcp import VirtualXcpSlave, XcpClient, XcpOnCan
+
+        if backend == "simulator":
+            net = VirtualCanNetwork()
+            slave = VirtualXcpSlave(net.new_endpoint("ecu"), self._measure_cro,
+                                    self._measure_dto, daq_period=0.02)
+            t0 = time.monotonic()
+
+            def provider(addr, size):
+                # A believable, moving engine speed so the UI shows real motion.
+                if addr == 0x2000:
+                    rpm = int(3200 + 2600 * math.sin((time.monotonic() - t0) * 1.3))
+                    return max(0, rpm).to_bytes(2, "little")
+                return None
+
+            slave.provider = provider
+            slave.set_bytes(0x2002, (900).to_bytes(2, "little"))
+            slave.set_bytes(0x2004, (13800).to_bytes(2, "little"))
+            slave.start()
+            tp = XcpOnCan(net.new_endpoint("tester"), self._measure_cro, self._measure_dto)
+            return XcpClient(tp), slave.stop
+        bus = create_bus(backend)
+        tp = XcpOnCan(bus, self._measure_cro, self._measure_dto)
+        return XcpClient(tp), bus.close
+
+    def _run_measure(self, signals, use_daq: bool) -> None:
+        from ..xcp import DaqMeasurement, PollingMeasurement, configure_daq
+
+        close = None
+        client = None
+        try:
+            client, close = self._open_xcp(self._measure_backend)
+            info = client.connect()
+            self._broadcast({"type": "measure", "event": "started",
+                             "signals": [{"name": s.name, "unit": s.unit} for s in signals],
+                             "backend": self._measure_backend,
+                             "mode": "daq" if use_daq else "poll",
+                             "maxCto": info["maxCto"]})
+
+            def on_sample(sample) -> None:
+                row = {"t": round(sample.t, 4), "values": sample.values}
+                self._measure_rows.append(row)
+                if len(self._measure_rows) > 20000:      # bound memory
+                    del self._measure_rows[:5000]
+                self._broadcast({"type": "sample", **row})
+
+            if use_daq:
+                layout = configure_daq(client, signals)
+                DaqMeasurement(client, layout).run(callback=on_sample,
+                                                   stop_event=self._measure_stop)
+            else:
+                PollingMeasurement(client, signals).run(
+                    rate_hz=self._measure_rate, callback=on_sample,
+                    stop_event=self._measure_stop)
+            self._broadcast({"type": "measure", "event": "stopped",
+                             "samples": len(self._measure_rows)})
+        except Exception as exc:  # noqa: BLE001
+            log.exception("measurement failed")
+            self._broadcast({"type": "measure", "event": "error", "msg": str(exc)})
+        finally:
+            try:
+                if client is not None and client.connected:
+                    client.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+            if close is not None:
+                try:
+                    close()
+                except Exception:  # noqa: BLE001
+                    pass
 
     # ------------------------------------------------------------------ #
     # Real ("expert") flash: profile + backend + firmware + seed/key

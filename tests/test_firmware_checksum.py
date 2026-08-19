@@ -11,7 +11,6 @@ from med17flasher.core import checksum as cs
 from med17flasher.core.ecu_profile import EcuProfile, builtin_med17_7_5, load_profile
 from med17flasher.core.firmware import (
     FirmwareImage,
-    load_firmware,
     load_intel_hex,
     load_srecord,
 )

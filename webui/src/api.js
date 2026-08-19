@@ -49,6 +49,26 @@ export const setExpertConfig = (cfg) =>
 export const startExpertFlash = () =>
   fetch('/api/expert/flash', { method: 'POST' }).then((res) => res.json())
 
+/* ---- Diagnostics -------------------------------------------------------- */
+export const scanEcu = (deep) => fetch(`/api/scan?deep=${deep ? 1 : 0}`).then(json)
+export const readMemory = (address, size) =>
+  fetch(`/api/memory?address=${encodeURIComponent(address)}&size=${size}`).then(json)
+export const getChecksum = () => fetch('/api/checksum').then(json)
+export const correctChecksum = () =>
+  fetch('/api/checksum/correct', { method: 'POST' }).then(json)
+
+/* ---- Measurement (XCP) -------------------------------------------------- */
+export const getMeasure = () => fetch('/api/measure').then(json)
+export const startMeasure = (cfg) =>
+  fetch('/api/measure/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg || {}),
+  }).then((res) => res.json())
+export const stopMeasure = () =>
+  fetch('/api/measure/stop', { method: 'POST' }).then(json)
+export const measureCsvUrl = () => '/api/measure/csv'
+
 /**
  * Subscribe to the flash event stream (SSE).
  * Returns an unsubscribe function.

@@ -14,7 +14,7 @@ and supply the correct ``params`` in the ECU profile / seed-key store.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .base import SeedKeyAlgorithm, register
 

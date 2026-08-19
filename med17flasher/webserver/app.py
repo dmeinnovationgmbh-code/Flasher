@@ -30,7 +30,6 @@ import json
 import os
 import queue
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional, Tuple
 from urllib.parse import parse_qs, urlparse
@@ -116,6 +115,16 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0) or 0)
         return self.rfile.read(length) if length else b""
 
+    def _csv(self, text: str, filename: str) -> None:
+        body = text.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(len(body)))
+        self._cors()
+        self.end_headers()
+        self.wfile.write(body)
+
     # -- verbs ---------------------------------------------------------- #
     def do_OPTIONS(self) -> None:  # noqa: N802
         self.send_response(204)
@@ -142,6 +151,29 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(200, self._svc.list_backends())
         elif path == "/api/expert":
             self._json(200, self._svc.expert_config())
+        elif path == "/api/scan":
+            try:
+                deep = parse_qs(urlparse(self.path).query).get("deep", ["0"])[0] == "1"
+                self._json(200, self._svc.scan(deep=deep))
+            except Exception as exc:  # noqa: BLE001
+                self._json(500, {"error": str(exc)})
+        elif path == "/api/memory":
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                addr = int(q.get("address", ["0"])[0], 0)
+                size = int(q.get("size", ["256"])[0], 0)
+                self._json(200, self._svc.read_memory(addr, size))
+            except Exception as exc:  # noqa: BLE001
+                self._json(400, {"error": str(exc)})
+        elif path == "/api/checksum":
+            try:
+                self._json(200, self._svc.checksum_report())
+            except Exception as exc:  # noqa: BLE001
+                self._json(400, {"error": str(exc)})
+        elif path == "/api/measure":
+            self._json(200, self._svc.measure_config())
+        elif path == "/api/measure/csv":
+            self._csv(self._svc.measure_csv(), "messung.csv")
         elif path == "/api/flash/stream":
             self._stream()
         elif path.startswith("/api/"):
@@ -183,6 +215,30 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 started = self._svc.start_expert_flash()
                 self._json(200 if started else 409, {"started": started})
+            except Exception as exc:  # noqa: BLE001
+                self._json(400, {"error": str(exc)})
+        elif path == "/api/measure/start":
+            body = self._read_json()
+            try:
+                started = self._svc.start_measure(
+                    signals=body.get("signals"),
+                    backend=body.get("backend"),
+                    rate=float(body.get("rate", 10.0)),
+                    cro=(int(body["cro"], 0) if isinstance(body.get("cro"), str)
+                         else body.get("cro")),
+                    dto=(int(body["dto"], 0) if isinstance(body.get("dto"), str)
+                         else body.get("dto")),
+                    use_daq=bool(body.get("daq")),
+                )
+                self._json(200 if started else 409, {"started": started})
+            except Exception as exc:  # noqa: BLE001
+                self._json(400, {"error": str(exc)})
+        elif path == "/api/measure/stop":
+            self._svc.stop_measure()
+            self._json(200, {"stopped": True})
+        elif path == "/api/checksum/correct":
+            try:
+                self._json(200, self._svc.checksum_correct())
             except Exception as exc:  # noqa: BLE001
                 self._json(400, {"error": str(exc)})
         elif path.startswith("/api/maps/") and path.endswith("/buy"):
