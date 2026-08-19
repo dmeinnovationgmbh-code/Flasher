@@ -22,6 +22,7 @@ datas = [
     (os.path.join(ROOT, "config"), "config"),
     (os.path.join(ROOT, "packaging", "icon.png"), "."),
 ]
+binaries = []
 
 # Optional integrations light up only if installed; don't hard-require them.
 hiddenimports = []
@@ -32,10 +33,28 @@ for opt in ("can", "serial", "webview", "yaml"):
     except Exception:
         pass
 
+# Bundle pywebview (native window) and its platform backend when installed on
+# the build machine. collect_all pulls the backend submodules + data the
+# PyInstaller hook needs; guarded so a build host without it still works.
+for _pkg in ("webview", "clr_loader", "pythonnet"):
+    try:
+        from PyInstaller.utils.hooks import collect_all
+
+        _d, _b, _h = collect_all(_pkg)
+        datas += _d
+        binaries += _b
+        hiddenimports += _h
+    except Exception:
+        pass
+
+# A windowed app (no console) on Windows/macOS so it feels like a real desktop
+# app; keep a console on Linux where a native webview backend is less certain.
+console_flag = sys.platform not in ("win32", "darwin")
+
 a = Analysis(
     [os.path.join(ROOT, "packaging", "desktop_entry.py")],
     pathex=[ROOT],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -62,7 +81,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,  # keep a console so users see the local URL / logs
+    console=console_flag,  # windowed (no terminal) on Windows/macOS
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

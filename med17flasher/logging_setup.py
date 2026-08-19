@@ -21,6 +21,7 @@ def configure_logging(
     level: int = logging.INFO,
     *,
     stream: Optional[TextIO] = None,
+    logfile: Optional[str] = None,
     fmt: str = DEFAULT_FORMAT,
     datefmt: str = DEFAULT_DATEFMT,
     force: bool = False,
@@ -29,6 +30,10 @@ def configure_logging(
 
     Repeated calls are no-ops unless ``force`` is given, which keeps libraries
     that import us from fighting over the root logger.
+
+    ``logfile`` adds a file handler (best-effort). In a windowed build with no
+    console, ``sys.stderr`` is ``None``; the stream handler is then skipped so
+    logging never fails, and ``logfile`` is the place errors are recorded.
     """
 
     global _CONFIGURED
@@ -40,9 +45,22 @@ def configure_logging(
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
 
-    handler = logging.StreamHandler(stream or sys.stderr)
-    handler.setFormatter(logging.Formatter(fmt=fmt, datefmt=datefmt))
-    logger.addHandler(handler)
+    formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)
+
+    target = stream if stream is not None else sys.stderr
+    if target is not None:  # None in a windowed (no-console) frozen app
+        sh = logging.StreamHandler(target)
+        sh.setFormatter(formatter)
+        logger.addHandler(sh)
+
+    if logfile:
+        try:
+            fh = logging.FileHandler(logfile, encoding="utf-8")
+            fh.setFormatter(formatter)
+            logger.addHandler(fh)
+        except OSError:
+            pass
+
     logger.setLevel(level)
     logger.propagate = False
     _CONFIGURED = True

@@ -4,9 +4,10 @@ The app ships as a **single standalone executable** – it already contains the
 Python backend, the web UI and the ECU profiles, so you do **not** need to
 install Python, Node or anything else. Download one file, run it, done.
 
-When it starts it prints a local URL and opens the **MED17 Flash Tool** UI in a
-window (or your browser). A small console window stays open showing the log and
-the local address – closing it stops the app.
+On Windows and macOS it opens as a **native desktop window** (no terminal, no
+browser tab). On Linux it opens the UI in your browser and runs from a small
+console window. If the app ever fails to start, Windows shows an error dialog and
+writes details to `med17flasher.log` in your temp folder.
 
 > ⚠️ Read [`SAFETY.md`](SAFETY.md) before writing to a real ECU.
 
@@ -40,7 +41,7 @@ the local address – closing it stops the app.
 1. Download `med17flasher-desktop-windows.exe`.
 2. Double‑click it. Windows SmartScreen may show *“Windows protected your PC”*
    because the build isn’t code‑signed – click **More info → Run anyway**.
-3. The tool opens; keep the little console window open while you use it.
+3. The tool opens in its own window.
 
 ## macOS
 

@@ -39,6 +39,7 @@ export default function App() {
   const [volt, setVolt] = useState(13.8)
   const [logs, setLogs] = useState([])
   const [autoscroll, setAutoscroll] = useState(true)
+  const [tab, setTab] = useState('flash')
   const logRef = useRef(null)
 
   // initial load + telemetry polling
@@ -128,23 +129,49 @@ export default function App() {
       <VehicleBar vehicle={vehicle} running={running}
         writeLabel={running ? 'Läuft …' : 'Schreiben'} onWrite={() => startFlash(null)} />
 
+      <TabBar tab={tab} setTab={setTab} mapCount={maps.length} />
+
       <main style={{
         display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 324px', gap: 18,
-        maxWidth: 1180, margin: '0 auto', padding: '0 22px 56px', alignItems: 'start',
+        maxWidth: 1180, margin: '0 auto', padding: '14px 22px 56px', alignItems: 'start',
       }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0 }}>
-          <WriteSection flash={flash} p={p} badgeText={badgeText} badgeColor={badgeColor}
-            running={running} onAbort={abortFlash} file={vehicle.file} />
-          <ExpertSection running={running} />
-          <MapsSection maps={maps} addons={addons} setAddons={setAddons}
-            buying={buying} unlocked={unlocked} onBuy={buy} onFlash={startFlash} />
-          <LogSection logs={logs} logRef={logRef} autoscroll={autoscroll}
-            onToggle={() => setAutoscroll((a) => !a)} />
+          {tab === 'flash' ? (
+            <>
+              <ExpertSection running={running} />
+              <WriteSection flash={flash} p={p} badgeText={badgeText} badgeColor={badgeColor}
+                running={running} onAbort={abortFlash} file={vehicle.file} />
+              <LogSection logs={logs} logRef={logRef} autoscroll={autoscroll}
+                onToggle={() => setAutoscroll((a) => !a)} />
+            </>
+          ) : (
+            <MapsSection maps={maps} addons={addons} setAddons={setAddons}
+              buying={buying} unlocked={unlocked} onBuy={buy} onFlash={(id) => { setTab('flash'); startFlash(id) }} />
+          )}
         </div>
 
         <Sidebar vehicle={vehicle} />
       </main>
     </>
+  )
+}
+
+/* ---------------------------------------------------------------- TabBar */
+function TabBar({ tab, setTab, mapCount }) {
+  const tabs = [['flash', 'Flashen'], ['maps', `OTS-Maps${mapCount ? ' · ' + mapCount : ''}`]]
+  return (
+    <div style={{ maxWidth: 1180, margin: '0 auto', padding: '0 22px', display: 'flex', gap: 6 }}>
+      {tabs.map(([k, label]) => {
+        const on = tab === k
+        return (
+          <button key={k} onClick={() => setTab(k)} style={{
+            padding: '8px 18px', borderRadius: 9, fontSize: 13.5, fontWeight: 600,
+            background: on ? '#1D1D1F' : 'rgba(0,0,0,.05)', color: on ? '#FFFFFF' : MUTED,
+            transition: 'background .15s',
+          }}>{label}</button>
+        )
+      })}
+    </div>
   )
 }
 

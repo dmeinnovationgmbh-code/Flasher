@@ -1,8 +1,9 @@
 """Desktop-app entry point.
 
 Starts the local web backend (which serves the bundled React UI) on a free port
-and opens it - in a native window via ``pywebview`` if installed, otherwise in
-the default browser. This is the entry point PyInstaller bundles into a single
+and opens it in a **native window** via ``pywebview`` (a real desktop app, no
+terminal, no browser tab). If pywebview is unavailable it falls back to the
+system browser. This is the entry point PyInstaller bundles into a single
 downloadable executable, so end users get a desktop app without installing
 Python or Node.
 """
@@ -10,7 +11,9 @@ Python or Node.
 from __future__ import annotations
 
 import logging
+import os
 import sys
+import tempfile
 import threading
 import time
 
@@ -18,78 +21,121 @@ from .logging_setup import configure_logging, get_logger
 
 log = get_logger("desktop")
 
+_TITLE = "MED17.7.5 Flash Tool"
+
+
+def _log_path() -> str:
+    return os.path.join(tempfile.gettempdir(), "med17flasher.log")
+
+
+def _open_native_window(url: str) -> bool:
+    """Open the UI in a native window. Returns True if a window was shown."""
+
+    try:
+        import webview  # type: ignore
+    except ImportError:
+        log.info("pywebview not bundled; using the browser")
+        return False
+    try:
+        webview.create_window(_TITLE, url, width=1280, height=900,
+                              min_size=(960, 660))
+        webview.start()  # blocks until the window is closed
+        return True
+    except Exception:  # noqa: BLE001 - any webview failure -> browser fallback
+        log.exception("native window failed; falling back to the browser")
+        return False
+
+
+def _open_browser_and_wait(url: str, server) -> int:
+    import webbrowser
+
+    threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    # These prints only show if a console exists (Linux build); harmless otherwise.
+    print("\n" + "=" * 58)
+    print(f"  {_TITLE} läuft.")
+    print(f"  Im Browser öffnen:  {url}")
+    print("  Fenster/Prozess offen lassen — Beenden stoppt die App.")
+    print("=" * 58 + "\n")
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.stop()
+    return 0
+
 
 def _run(argv=None) -> int:
-    configure_logging(logging.INFO)
+    configure_logging(logging.INFO, logfile=_log_path())
     from .webserver import FlashService, WebServer
 
     server = WebServer(FlashService(), host="127.0.0.1", port=0)
     server.start(block=False)
     url = server.url
     root = server._httpd.static_root  # type: ignore[attr-defined]
-    log.info("MED17.7.5 Flash Tool desktop app on %s", url)
+    log.info("%s on %s", _TITLE, url)
     if not root:
         log.warning("web UI not bundled/built; the API is available under /api")
 
-    try:
-        # Preferred: a real native window (only if pywebview is bundled).
-        import webview  # type: ignore
-
-        webview.create_window("MED17.7.5 Flash Tool", url,
-                              width=1200, height=920, min_size=(900, 640))
-        webview.start()  # blocks until the window closes
+    if _open_native_window(url):
         server.stop()
         return 0
-    except ImportError:
-        pass
-    except Exception:  # noqa: BLE001 - a webview failure must fall back, not crash
-        log.exception("native window failed; falling back to the browser")
+    return _open_browser_and_wait(url, server)
 
-    # Fallback: open the system browser and keep the server alive.
-    import webbrowser
 
-    threading.Timer(0.6, lambda: webbrowser.open(url)).start()
-    print("\n" + "=" * 58)
-    print("  MED17.7.5 Flash Tool läuft.")
-    print(f"  Im Browser öffnen:  {url}")
-    print("  Der Browser sollte sich automatisch öffnen.")
-    print("  Dieses Fenster offen lassen — Schließen beendet die App.")
-    print("=" * 58 + "\n")
+def _show_error(exc: BaseException) -> None:
+    """Surface a startup failure without a console (native dialog + logfile)."""
+
+    msg = f"{type(exc).__name__}: {exc}"
     try:
-        while True:
-            time.sleep(3600)
-    except KeyboardInterrupt:
-        print("\nshutting down ...")
-    finally:
-        server.stop()
-    return 0
+        with open(_log_path(), "a", encoding="utf-8") as fh:
+            import traceback
+
+            fh.write("\n--- startup failure ---\n")
+            traceback.print_exc(file=fh)
+    except Exception:  # noqa: BLE001
+        pass
+    # A real dialog on Windows (no terminal needed).
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(  # type: ignore[attr-defined]
+                None,
+                f"{_TITLE} konnte nicht starten:\n\n{msg}\n\nDetails: {_log_path()}",
+                _TITLE, 0x10,
+            )
+            return
+        except Exception:  # noqa: BLE001
+            pass
+    # Console builds (Linux) / fallback: print + wait so it stays readable.
+    print("\n" + "=" * 58)
+    print(f"  {_TITLE} konnte nicht starten:\n    {msg}")
+    print(f"  Log: {_log_path()}")
+    print("=" * 58)
+    try:
+        import traceback
+
+        traceback.print_exc()
+        input("\nMit Enter schließen … ")
+    except BaseException:  # noqa: BLE001 - no stdin: just exit
+        pass
 
 
 def main(argv=None) -> int:
-    """Entry point. Never let an exception close the console without a trace."""
+    """Entry point. Never vanish silently — show any startup failure."""
 
     try:
         return _run(argv)
     except SystemExit:
         raise
-    except BaseException as exc:  # noqa: BLE001 - keep the window open on any crash
-        # A frozen console app that raises here just vanishes ("black window
-        # flashes and closes"). Show the error and wait so the user can read it.
+    except BaseException as exc:  # noqa: BLE001
         try:
             log.exception("desktop app failed to start")
         except Exception:  # noqa: BLE001
             pass
-        import traceback
-
-        print("\n" + "=" * 58)
-        print("  MED17.7.5 Flash Tool konnte nicht starten:")
-        print(f"    {type(exc).__name__}: {exc}")
-        print("=" * 58)
-        traceback.print_exc()
-        try:
-            input("\nMit Enter schließen … ")
-        except BaseException:  # noqa: BLE001 - no stdin (service/pytest): just exit
-            pass
+        _show_error(exc)
         return 1
 
 
