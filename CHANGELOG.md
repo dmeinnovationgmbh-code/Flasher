@@ -27,6 +27,21 @@ uses [Semantic Versioning](https://semver.org/).
 - The app's transport dropdown lists installed J2534 interfaces by their real
   name; when none is installed the entry stays visible but disabled.
 
+- **Firmware vom Server laden** — the app can now pull images straight from a
+  running `med17flasher fileserver` (URL + token in the Flashen tab, catalogue
+  listing, one click to stage a file). Previously the file server existed but
+  was not reachable from the app at all, so firmware had to be copied to each
+  workstation by hand. Server-supplied images go through exactly the same
+  parsing and validation as an upload.
+- **A 32-bit vendor seed/key DLL now works from the 64-bit app.** `open_seedkey_dll()`
+  loads in-process and falls back to the 32-bit helper on exactly the loader
+  error, mirroring `open_j2534()`; the UI's "Vendor-DLL" source uses it and a
+  "force the helper" option was added. Until now picking a DLL in the app was
+  guaranteed to fail with WinError 193 — the bridge existed only in the CLI.
+- New [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md): everything that has to be
+  supplied from outside (interface, seed/key, firmware server, profile) and the
+  write-free order to bring a car up for the first time.
+
 ### Changed
 - The 32-bit helper-process machinery (interpreter discovery, spawning, the
   line-JSON exchange) moved into `core/procbridge.py` and is now shared by the

@@ -59,7 +59,8 @@ from .base import SeedKeyAlgorithm
 
 log = get_logger("seedkey.bridge")
 
-__all__ = ["SeedKeyBridge", "BridgeAlgorithm", "find_python32"]
+__all__ = ["SeedKeyBridge", "BridgeAlgorithm", "find_python32",
+           "open_seedkey_dll"]
 
 
 # --------------------------------------------------------------------------- #
@@ -235,3 +236,48 @@ def _worker_main(argv: List[str]) -> int:
 
 if __name__ == "__main__":
     sys.exit(_worker_main(sys.argv[1:]))
+
+
+# --------------------------------------------------------------------------- #
+# Entry point with automatic 32-bit fallback
+# --------------------------------------------------------------------------- #
+def _is_bitness_error(exc: Exception) -> bool:
+    """Is this the loader refusing a wrong-architecture image?
+
+    WinError 193 (``%1 is not a valid Win32 application``) is the Windows
+    signal; the ELF loader says "wrong ELF class" instead.
+    """
+
+    text = str(exc).lower()
+    return ("193" in text or "not a valid win32 application" in text
+            or "wrong elf class" in text or "invalid win32" in text)
+
+
+def open_seedkey_dll(path: str, *, options: str = "",
+                     python32: Optional[str] = None, params: Optional[Dict[str, Any]] = None):
+    """Open a seed/key DLL as a **resolver**, bridging out-of-process if needed.
+
+    Vendor seed-key DLLs are 32-bit, and the desktop build is 64-bit, so loading
+    one in-process fails outright. This tries in-process first (fast path: the
+    bitness already matches) and falls back to :class:`SeedKeyBridge` on exactly
+    that loader error - the same shape as
+    :func:`med17flasher.core.j2534.open_j2534`.
+
+    The DLL is loaded eagerly rather than on the first key request: a wrong
+    interpreter must surface while configuring, not halfway through a flash with
+    the ECU already unlocked and erased.
+    """
+
+    from . import AlgorithmResolver  # local: the package imports this module
+    from .dll import DllSeedKey
+
+    algo = DllSeedKey(path, options=options)
+    try:
+        algo._load()
+    except SeedKeyError as exc:
+        if not _is_bitness_error(exc):
+            raise
+        log.info("seed/key DLL %r cannot be loaded in-process (%s); "
+                 "falling back to the 32-bit bridge", path, exc)
+        return SeedKeyBridge(path, options=options, python32=python32)
+    return AlgorithmResolver(algo, params or {})

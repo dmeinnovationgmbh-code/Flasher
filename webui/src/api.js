@@ -69,6 +69,23 @@ export const stopMeasure = () =>
   fetch('/api/measure/stop', { method: 'POST' }).then(json)
 export const measureCsvUrl = () => '/api/measure/csv'
 
+// --- Firmware repository (file server) ------------------------------------
+export const getRepo = () => fetch('/api/repo').then(json)
+export const setRepo = (cfg) =>
+  fetch('/api/repo', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg || {}),
+  }).then(json)
+export const listRepo = (q) =>
+  fetch('/api/repo/list' + (q ? `?q=${encodeURIComponent(q)}` : '')).then(json)
+export const useRepoFirmware = (id) =>
+  fetch('/api/repo/use', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  }).then(json)
+
 /**
  * Subscribe to the flash event stream (SSE).
  * Returns an unsubscribe function.

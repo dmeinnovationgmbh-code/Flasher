@@ -15,7 +15,7 @@ from .base import (
     register,
     register_function,
 )
-from .bridge import SeedKeyBridge, find_python32
+from .bridge import SeedKeyBridge, find_python32, open_seedkey_dll
 from .dll import DllSeedKey, ExeSeedKey, make_backend
 
 
@@ -61,5 +61,6 @@ __all__ = [
     "make_backend",
     "AlgorithmResolver",
     "SeedKeyBridge",
+    "open_seedkey_dll",
     "find_python32",
 ]

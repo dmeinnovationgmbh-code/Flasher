@@ -439,9 +439,11 @@ function ExpertSection({ running }) {
   const [backends, setBackends] = useState([])
   const [form, setForm] = useState({
     profileId: '', backend: 'simulator', seedSource: 'profile',
-    seedUrl: '', seedPath: '', seedOptions: '', allowWrite: false,
+    seedUrl: '', seedPath: '', seedOptions: '', python32: '', allowWrite: false,
+    repoUrl: '', repoToken: '',
   })
   const [fw, setFw] = useState(null)
+  const [repoList, setRepoList] = useState(null)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState(null)
 
@@ -477,10 +479,41 @@ function ExpertSection({ running }) {
     }
   }
 
+  const onRepoConnect = async () => {
+    setBusy(true); setMsg(null)
+    try {
+      const cfg = await api.setRepo({ url: form.repoUrl, token: form.repoToken })
+      if (!cfg.url) { setRepoList(null); setMsg({ ok: true, t: 'Firmware-Server getrennt.' }); return }
+      if (cfg.reachable === false) {
+        setRepoList(null)
+        setMsg({ ok: false, t: `Server nicht erreichbar: ${cfg.error || 'keine Antwort'}` })
+        return
+      }
+      const d = await api.listRepo()
+      setRepoList(d.firmwares || [])
+      setMsg({ ok: true, t: `Verbunden · ${(d.firmwares || []).length} Firmware(s) im Katalog.` })
+    } catch (err) {
+      setRepoList(null)
+      setMsg({ ok: false, t: String(err.message || err) })
+    } finally { setBusy(false) }
+  }
+
+  const onRepoUse = async (id) => {
+    setBusy(true); setMsg(null)
+    try {
+      const d = await api.useRepoFirmware(id)
+      setFw(d.firmware)
+      setMsg({ ok: true, t: `Vom Server geladen · ${d.firmware.name} · ${d.firmware.programBytes} Bytes · CRC32 ${d.firmware.crc32}` })
+    } catch (err) {
+      setMsg({ ok: false, t: `Download fehlgeschlagen: ${String(err.message || err)}` })
+    } finally { setBusy(false) }
+  }
+
   const seedCfg = () => {
     const s = form.seedSource
     if (s === 'server') return { source: 'server', url: form.seedUrl }
-    if (s === 'dll' || s === 'exe') return { source: s, path: form.seedPath, options: form.seedOptions }
+    if (s === 'dll' || s === 'bridge' || s === 'exe')
+      return { source: s, path: form.seedPath, options: form.seedOptions, python32: form.python32 }
     if (s === 'store') return { source: 'store', path: form.seedPath }
     return { source: 'profile' }
   }
@@ -504,7 +537,7 @@ function ExpertSection({ running }) {
 
   const canFlash = form.profileId && fw && !running && !busy && (!isReal || form.allowWrite)
   const seedNeedsUrl = form.seedSource === 'server'
-  const seedNeedsPath = ['dll', 'exe', 'store'].includes(form.seedSource)
+  const seedNeedsPath = ['dll', 'bridge', 'exe', 'store'].includes(form.seedSource)
 
   return (
     <section style={cardStyle}>
@@ -535,8 +568,50 @@ function ExpertSection({ running }) {
           </div>
         </div>
 
+        <div style={{ border: '1px solid rgba(0,0,0,.09)', borderRadius: 10, padding: '12px 14px' }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 8 }}>Firmware vom Server</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 8, alignItems: 'end' }}>
+            <div>
+              <label style={fieldLabel}>Server-URL</label>
+              <input style={inputStyle} placeholder="http://192.168.1.10:8080"
+                value={form.repoUrl} onChange={(e) => upd('repoUrl', e.target.value)} />
+            </div>
+            <div>
+              <label style={fieldLabel}>Token (optional)</label>
+              <input style={inputStyle} type="password" placeholder="Bearer-Token"
+                value={form.repoToken} onChange={(e) => upd('repoToken', e.target.value)} />
+            </div>
+            <button onClick={onRepoConnect} disabled={busy}
+              style={{ padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, border: '1px solid rgba(0,0,0,.12)' }}>
+              Verbinden
+            </button>
+          </div>
+          {repoList && (
+            repoList.length === 0
+              ? <div style={{ marginTop: 8, fontSize: 12, color: MUTED }}>Der Katalog ist leer.</div>
+              : (
+                <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 190, overflowY: 'auto' }}>
+                  {repoList.map((f) => (
+                    <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderRadius: 8, background: 'rgba(0,0,0,.04)' }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.filename}</div>
+                        <div style={{ fontFamily: MONO, fontSize: 11, color: FAINT }}>
+                          {f.ecu || '—'}{f.sw_version ? ` · SW ${f.sw_version}` : ''} · {f.size} B
+                        </div>
+                      </div>
+                      <button onClick={() => onRepoUse(f.id)} disabled={busy}
+                        style={{ padding: '5px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600, border: '1px solid rgba(0,0,0,.12)' }}>
+                        Laden
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )
+          )}
+        </div>
+
         <div>
-          <label style={fieldLabel}>Firmware-Datei</label>
+          <label style={fieldLabel}>… oder Firmware-Datei vom Rechner</label>
           <input type="file" accept=".bin,.hex,.s19,.srec,.mot" onChange={onUpload}
             style={{ ...inputStyle, padding: '7px 10px' }} />
           {fw && (
@@ -553,7 +628,8 @@ function ExpertSection({ running }) {
             <select style={inputStyle} value={form.seedSource} onChange={(e) => upd('seedSource', e.target.value)}>
               <option value="profile">Aus Profil (Algorithmus)</option>
               <option value="server">Seed/Key-Server (URL)</option>
-              <option value="dll">Vendor-DLL (J2534)</option>
+              <option value="dll">Vendor-DLL (32-Bit automatisch)</option>
+              <option value="bridge">Vendor-DLL über 32-Bit-Helfer (erzwungen)</option>
               <option value="exe">Seed/Key-EXE</option>
               <option value="store">Seed/Key-Katalog (JSON)</option>
             </select>

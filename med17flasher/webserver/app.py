@@ -151,6 +151,16 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(200, self._svc.list_backends())
         elif path == "/api/expert":
             self._json(200, self._svc.expert_config())
+        elif path == "/api/repo":
+            self._json(200, self._svc.repo_config())
+        elif path == "/api/repo/list":
+            try:
+                q = parse_qs(urlparse(self.path).query)
+                self._json(200, self._svc.repo_list(
+                    query=(q.get("q") or [None])[0],
+                    ecu=(q.get("ecu") or [None])[0]))
+            except Exception as exc:  # noqa: BLE001
+                self._json(502, {"error": str(exc)})
         elif path == "/api/scan":
             try:
                 deep = parse_qs(urlparse(self.path).query).get("deep", ["0"])[0] == "1"
@@ -198,6 +208,21 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(200, {"firmware": self._svc.set_firmware(name, data)})
             except Exception as exc:  # noqa: BLE001
                 self._json(400, {"error": str(exc)})
+        elif path == "/api/repo":
+            body = self._read_json()
+            try:
+                self._json(200, self._svc.set_repo(url=body.get("url"),
+                                                   token=body.get("token")))
+            except Exception as exc:  # noqa: BLE001
+                self._json(400, {"error": str(exc)})
+        elif path == "/api/repo/use":
+            body = self._read_json()
+            try:
+                self._json(200, {"firmware": self._svc.repo_use(body.get("id") or "")})
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self._json(502, {"error": str(exc)})
         elif path == "/api/expert/config":
             body = self._read_json()
             try:

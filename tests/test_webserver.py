@@ -401,3 +401,148 @@ def test_http_endpoints():
                                      headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=5) as r:
             assert json.loads(r.read())["started"] is True
+
+
+# --------------------------------------------------------------------------- #
+# Firmware repository (file server) wired into the app
+# --------------------------------------------------------------------------- #
+def test_repo_pull_stages_firmware_for_flashing():
+    """A workshop keeps one firmware library; the app pulls from it.
+
+    Driven against a real running file server, so the whole chain is exercised:
+    configure -> health check -> list -> download -> parse -> staged.
+    """
+
+    import os
+    import tempfile
+
+    from med17flasher.server import FileServer, FirmwareRepository
+
+    data = bytes((i * 3) & 0xFF for i in range(0x800))
+    with tempfile.TemporaryDirectory() as d:
+        repo = FirmwareRepository(os.path.join(d, "repo"))
+        meta = repo.add(data, "asw_stage1.bin", ecu="MED17.7.5", sw_version="1779032500")
+        with FileServer(repo, port=0, token="secret") as srv:
+            svc = FlashService(throttle_kbs=0)
+            assert svc.repo_config() == {"url": "", "hasToken": False}
+
+            cfg = svc.set_repo(url=srv.url, token="secret")
+            assert cfg["reachable"] is True
+            assert cfg["hasToken"] is True
+            # The token is never handed back out to the browser.
+            assert "secret" not in str(cfg)
+
+            listing = svc.repo_list()
+            assert [f["id"] for f in listing["firmwares"]] == [meta.id]
+
+            summary = svc.repo_use(meta.id)
+            assert summary["source"] == "repo"
+            assert summary["name"] == "asw_stage1.bin"
+            assert summary["size"] == len(data)
+            # Staged exactly like an uploaded file, so a flash can use it.
+            assert svc.firmware_summary()["name"] == "asw_stage1.bin"
+            assert svc.expert_config()["repo"]["url"] == srv.url
+
+
+def test_repo_reports_an_unreachable_server_instead_of_failing_later():
+    svc = FlashService(throttle_kbs=0)
+    cfg = svc.set_repo(url="http://127.0.0.1:9")  # nothing listens there
+    assert cfg["reachable"] is False
+    assert cfg["error"]
+    with pytest.raises(Exception):
+        svc.repo_list()
+
+
+def test_repo_use_needs_a_configured_server():
+    svc = FlashService(throttle_kbs=0)
+    with pytest.raises(ValueError):
+        svc.repo_use("")
+    svc.set_repo(url="")
+    with pytest.raises(ValueError):
+        svc.repo_use("some-id")
+
+
+# --------------------------------------------------------------------------- #
+# Seed/key: a 32-bit vendor DLL must work from this 64-bit app
+# --------------------------------------------------------------------------- #
+def test_seedkey_dll_source_loads_in_process_when_bitness_matches(tmp_path):
+    """`source: dll` resolves through the real ctypes path when it can."""
+
+    import shutil
+    import subprocess
+
+    cc = shutil.which("gcc") or shutil.which("cc")
+    if not cc:
+        pytest.skip("no C compiler for the mock seed-key lib")
+    src = tmp_path / "mock.c"
+    src.write_text(
+        "typedef unsigned char u8; typedef unsigned int u32;\n"
+        "long GenerateKeyExOpt(u8* s, u32 n, const char* o, u8* k, u32* kn){\n"
+        "  for (u32 i=0;i<4;i++) k[i] = s[i] ^ 0xA5; *kn=4; return 0; }\n"
+    )
+    so = tmp_path / "mock_seedkey.so"
+    subprocess.run([cc, "-shared", "-fPIC", "-o", str(so), str(src)], check=True)
+
+    svc = FlashService(_small_profile(), throttle_kbs=0)
+    resolver = svc._build_resolver(_small_profile(), {"source": "dll", "path": str(so)})
+    key = resolver.compute("MED17.7.5", 0x05, bytes([0x11, 0x22, 0x33, 0x44]))
+    assert key == bytes([0x11 ^ 0xA5, 0x22 ^ 0xA5, 0x33 ^ 0xA5, 0x44 ^ 0xA5])
+
+
+def test_seedkey_dll_falls_back_to_the_32bit_bridge(monkeypatch):
+    """A 64-bit app must still drive a 32-bit vendor DLL, not just give up."""
+
+    import med17flasher.seedkey.bridge as bridge_mod
+    from med17flasher.exceptions import SeedKeyError
+
+    calls = {}
+
+    def fake_load(self):
+        raise SeedKeyError(
+            "cannot load seed-key DLL: [WinError 193] %1 is not a valid Win32 "
+            "application. It is a 32-bit Windows DLL")
+
+    class FakeBridge:
+        def __init__(self, path, **kw):
+            calls["path"] = path
+            calls["kw"] = kw
+
+    monkeypatch.setattr("med17flasher.seedkey.dll.DllSeedKey._load", fake_load)
+    monkeypatch.setattr(bridge_mod, "SeedKeyBridge", FakeBridge)
+
+    svc = FlashService(_small_profile(), throttle_kbs=0)
+    resolver = svc._build_resolver(
+        _small_profile(), {"source": "dll", "path": "MED1775_12_42_00.dll"})
+    assert isinstance(resolver, FakeBridge)
+    assert calls["path"] == "MED1775_12_42_00.dll"
+
+
+def test_seedkey_dll_error_that_is_not_bitness_is_not_swallowed(monkeypatch):
+    from med17flasher.exceptions import SeedKeyError
+
+    def fake_load(self):
+        raise SeedKeyError("seed-key DLL not found: 'nope.dll'")
+
+    monkeypatch.setattr("med17flasher.seedkey.dll.DllSeedKey._load", fake_load)
+    svc = FlashService(_small_profile(), throttle_kbs=0)
+    with pytest.raises(SeedKeyError, match="not found"):
+        svc._build_resolver(_small_profile(), {"source": "dll", "path": "nope.dll"})
+
+
+def test_seedkey_source_bridge_is_selectable(monkeypatch):
+    import med17flasher.seedkey.bridge as bridge_mod
+
+    seen = {}
+
+    class FakeBridge:
+        def __init__(self, path, **kw):
+            seen["path"], seen["kw"] = path, kw
+
+    monkeypatch.setattr(bridge_mod, "SeedKeyBridge", FakeBridge)
+    monkeypatch.setattr("med17flasher.seedkey.SeedKeyBridge", FakeBridge)
+    svc = FlashService(_small_profile(), throttle_kbs=0)
+    resolver = svc._build_resolver(
+        _small_profile(),
+        {"source": "bridge", "path": "v.dll", "python32": "C:\\py32\\python.exe"})
+    assert isinstance(resolver, FakeBridge)
+    assert seen["kw"]["python32"] == "C:\\py32\\python.exe"

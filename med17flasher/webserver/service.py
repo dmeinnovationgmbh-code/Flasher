@@ -150,6 +150,11 @@ class FlashService:
         self._expert_allow_write = False
         self._uploaded: Optional[Dict[str, Any]] = None
 
+        # Firmware repository (the file server) the UI can pull images from,
+        # so a workshop keeps one library instead of copying .bin files around.
+        self._repo_url = ""
+        self._repo_token = ""
+
         # Measurement (XCP) state
         self._measure_thread: Optional[threading.Thread] = None
         self._measure_stop = threading.Event()
@@ -510,6 +515,66 @@ class FlashService:
 
         return {"backends": backends, "seedkeyAlgorithms": list_algorithms()}
 
+    # ------------------------------------------------------------------ #
+    # Firmware repository (file server)
+    # ------------------------------------------------------------------ #
+    def repo_config(self) -> dict:
+        """The configured repository, without leaking the token back out."""
+
+        return {"url": self._repo_url, "hasToken": bool(self._repo_token)}
+
+    def set_repo(self, url: Optional[str] = None,
+                 token: Optional[str] = None) -> dict:
+        """Point the app at a firmware file server (and verify it answers)."""
+
+        if url is not None:
+            self._repo_url = url.strip().rstrip("/")
+        if token is not None:
+            self._repo_token = token.strip()
+        out = self.repo_config()
+        if self._repo_url:
+            # Fail here, while the user is looking at the field - not later,
+            # halfway through picking a firmware.
+            try:
+                out["reachable"] = self._repo_client().health()
+            except Exception as exc:  # noqa: BLE001
+                out["reachable"] = False
+                out["error"] = str(exc)
+        return out
+
+    def _repo_client(self):
+        from ..server.client import FileServerClient
+
+        if not self._repo_url:
+            raise ValueError("keine Firmware-Server-URL konfiguriert")
+        return FileServerClient(self._repo_url, token=self._repo_token or None)
+
+    def repo_list(self, query: Optional[str] = None,
+                  ecu: Optional[str] = None) -> dict:
+        """List the firmwares the server offers."""
+
+        return {"firmwares": self._repo_client().list(ecu=ecu, query=query),
+                **self.repo_config()}
+
+    def repo_use(self, fw_id: str) -> dict:
+        """Download one firmware from the server and stage it for flashing.
+
+        Routed through :meth:`set_firmware` so a server-supplied image goes
+        through exactly the same parsing and validation as an uploaded file.
+        """
+
+        if not fw_id:
+            raise ValueError("keine Firmware-ID angegeben")
+        client = self._repo_client()
+        meta = client.get_meta(fw_id)
+        data = client.download_bytes(fw_id)
+        name = str(meta.get("filename") or f"{fw_id}.bin")
+        summary = self.set_firmware(name, data)
+        summary["source"] = "repo"
+        summary["repoId"] = fw_id
+        log.info("firmware %s pulled from %s", fw_id, self._repo_url)
+        return summary
+
     def set_firmware(self, name: Optional[str], data: bytes) -> dict:
         """Accept an uploaded firmware file (raw .bin / Intel-HEX / S-Record)."""
 
@@ -574,6 +639,7 @@ class FlashService:
             "backend": self._expert_backend,
             "isSimulator": is_sim,
             "seedkey": self._expert_seedkey,
+            "repo": self.repo_config(),
             "allowWrite": self._expert_allow_write,
             "firmware": self.firmware_summary(),
             "ready": bool(prof and self._uploaded),
@@ -592,14 +658,29 @@ class FlashService:
             if not url:
                 raise ValueError("Seed/Key-Server-URL fehlt")
             return SeedKeyClient(url)
-        if src in ("dll", "exe"):
+        if src in ("dll", "bridge"):
+            # Vendor seed-key DLLs are 32-bit and this build is 64-bit, so a
+            # plain in-process load fails. open_seedkey_dll() tries in-process
+            # and falls back to the helper process on exactly that error;
+            # "bridge" forces the helper straight away.
+            from ..seedkey import SeedKeyBridge, open_seedkey_dll
+
+            path = (cfg.get("path") or "").strip()
+            if not path:
+                raise ValueError("Pfad zur Seed/Key-DLL fehlt")
+            options = str(cfg.get("options") or "")
+            python32 = (cfg.get("python32") or "").strip() or None
+            if src == "bridge":
+                return SeedKeyBridge(path, options=options, python32=python32)
+            return open_seedkey_dll(path, options=options, python32=python32)
+        if src == "exe":
             from ..seedkey import AlgorithmResolver, make_backend
 
             path = (cfg.get("path") or "").strip()
             if not path:
-                raise ValueError("Pfad zur Seed/Key-DLL/EXE fehlt")
+                raise ValueError("Pfad zur Seed/Key-EXE fehlt")
             params = {"options": cfg["options"]} if cfg.get("options") else {}
-            return AlgorithmResolver(make_backend(f"{src}:{path}"), params)
+            return AlgorithmResolver(make_backend(f"exe:{path}"), params)
         if src == "store":
             from ..seedkey import SeedKeyStore
 
