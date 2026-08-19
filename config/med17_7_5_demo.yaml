@@ -1,0 +1,41 @@
+# A small, fast MED17.7.5 profile for demos, the simulator and the test suite.
+# Same structure as the full profile but with tiny regions so a full flash
+# completes in a fraction of a second over the in-process virtual bus.
+name: MED17.7.5
+description: MED17.7.5 demo profile (small regions for simulator/tests)
+
+can:
+  tx_id: 0x7E0
+  rx_id: 0x7E8
+  functional_id: 0x7DF
+  padding_byte: 0x55
+
+timing:
+  p2: 1.0
+  p2_star: 3.0
+  tester_present_period: 0.5
+
+security:
+  request_seed_level: 0x11
+  send_key_level: 0x12
+  algorithm: med17
+  params:
+    k: 0x1C5A36B7
+    rounds: 5
+    shift: 5
+
+routines:
+  erase_memory: 0xFF00
+  check_programming_dependencies: 0xFF01
+  check_memory: 0x0202
+  erase_argument: address_size
+
+memory_map:
+  - name: ASW
+    start: 0x80040000
+    size:  0x00002000
+    checksum: crc32
+  - name: CAL
+    start: 0x80042000
+    size:  0x00001000
+    checksum: crc32

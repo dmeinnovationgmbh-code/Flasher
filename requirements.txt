@@ -1,0 +1,11 @@
+# Core med17flasher has NO required third-party dependencies.
+# The packages below are OPTIONAL and unlock extra capabilities:
+
+# Read YAML ECU profiles (JSON profiles work without it):
+PyYAML>=5.1
+
+# Real CAN adapters (PCAN, Vector, Kvaser, SocketCAN, slcan, ...):
+# python-can>=4.0
+
+# ELM327 / serial CAN adapters:
+# pyserial>=3.4

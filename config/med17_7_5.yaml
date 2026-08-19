@@ -1,0 +1,71 @@
+# ---------------------------------------------------------------------------
+# MED17.7.5 ECU profile (Bosch MEDC17 / Infineon TriCore TC1797)
+#
+# This is a TEMPLATE modelled on the public MED17 flash flow. The addresses,
+# routine ids, security level and seed/key constants MUST be verified against
+# your ECU's ODX / flash description before writing to real hardware.
+#
+# TriCore program flash uses the 0x80000000 segment base. The low boot sector
+# (0x80000000..0x8001FFFF) is deliberately excluded - it must not be
+# reprogrammed over UDS.
+# ---------------------------------------------------------------------------
+name: MED17.7.5
+description: Bosch MED17.7.5 (Infineon TriCore TC1797) - template profile
+
+can:
+  tx_id: 0x7E0          # tester -> ECU (physical request)
+  rx_id: 0x7E8          # ECU -> tester (response)
+  functional_id: 0x7DF  # functional / broadcast request
+  is_extended_id: false
+  padding_byte: 0x55    # frames are padded to 8 bytes
+  bitrate: 500000
+
+timing:
+  p2: 1.0               # normal response timeout (s)
+  p2_star: 5.0          # extended timeout after a 0x78 responsePending (s)
+  st_min: 0x00          # separation time we advertise while receiving
+  block_size: 0         # 0 = peer may send everything without extra flow control
+  tester_present_period: 2.0
+  routine_timeout: 25.0
+
+security:
+  request_seed_level: 0x11   # programming-level requestSeed sub-function
+  send_key_level: 0x12       # programming-level sendKey sub-function
+  algorithm: med17           # registered in med17flasher.seedkey
+  params:
+    k: 0x1C5A36B7            # <-- replace with your ECU's constant
+    rounds: 5
+    shift: 5
+
+routines:
+  erase_memory: 0xFF00
+  check_programming_dependencies: 0xFF01
+  check_memory: 0x0202
+  erase_argument: address_size   # or "block_id"
+
+transfer_data_format: 0x00       # uncompressed / unencrypted
+programming_session: 0x02
+upload_flash_driver: false
+
+# Logical program blocks. Each is erased and downloaded as one unit.
+memory_map:
+  - name: CBOOT
+    start: 0x80020000
+    size:  0x00020000
+    erase: true
+    checksum: crc32
+  - name: ASW1
+    start: 0x80040000
+    size:  0x001C0000
+    erase: true
+    checksum: crc32
+  - name: ASW2
+    start: 0x80200000
+    size:  0x00100000
+    erase: true
+    checksum: crc32
+  - name: CAL
+    start: 0x80300000
+    size:  0x00100000
+    erase: true
+    checksum: crc32
