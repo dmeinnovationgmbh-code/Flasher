@@ -46,6 +46,8 @@ export default function App() {
   const [tab, setTab] = useState('flash')
   const [samples, setSamples] = useState([])
   const [measureMeta, setMeasureMeta] = useState(null)
+  const [sniffEvents, setSniffEvents] = useState([])
+  const [sniffMeta, setSniffMeta] = useState(null)
   const logRef = useRef(null)
 
   // initial load + telemetry polling
@@ -93,6 +95,21 @@ export default function App() {
           setMeasureMeta((m) => (m ? { ...m, running: false } : m))
         } else if (ev.event === 'error') {
           setMeasureMeta((m) => ({ ...(m || {}), running: false, error: ev.msg }))
+        }
+      } else if (ev.type === 'sniff') {
+        if (ev.event === 'started') {
+          setSniffEvents([])
+          setSniffMeta({ running: true, backend: ev.backend, frames: 0, ids: 0, report: null })
+        } else if (ev.event === 'flow') {
+          setSniffEvents((es) => (es.length > 400 ? es.slice(-350) : es).concat([ev]))
+        } else if (ev.event === 'stats') {
+          setSniffMeta((m) => ({ ...(m || {}), frames: ev.frames, ids: ev.ids }))
+        } else if (ev.event === 'report') {
+          setSniffMeta((m) => ({ ...(m || {}), report: ev }))
+        } else if (ev.event === 'stopped') {
+          setSniffMeta((m) => ({ ...(m || {}), running: false, frames: ev.frames }))
+        } else if (ev.event === 'error') {
+          setSniffMeta((m) => ({ ...(m || {}), running: false, error: ev.msg }))
         }
       } else if (ev.type === 'done') {
         setFlash((f) => ({
@@ -189,6 +206,7 @@ export default function App() {
             </>
           )}
           {tab === 'measure' && <MeasureSection samples={samples} meta={measureMeta} />}
+          {tab === 'sniff' && <SniffSection events={sniffEvents} meta={sniffMeta} />}
           {tab === 'diag' && <DiagSection onIdentified={applyIdent} />}
           {tab === 'maps' && (
             <MapsSection maps={maps} addons={addons} setAddons={setAddons}
@@ -208,6 +226,7 @@ function TabBar({ tab, setTab, mapCount }) {
   const tabs = [
     ['flash', 'Flashen'],
     ['measure', 'Messen'],
+    ['sniff', 'Sniffer'],
     ['diag', 'Diagnose'],
     ['maps', `OTS-Maps${mapCount ? ' · ' + mapCount : ''}`],
   ]
@@ -876,6 +895,176 @@ function MeasureSection({ samples, meta }) {
               </div>
             )
           })}
+        </section>
+      )}
+    </>
+  )
+}
+
+/* ----------------------------------------------------------- SniffSection */
+const SNIFF_KIND_COLOR = {
+  session: '#0A84FF', seed: ACCENT_DARK, key: ACCENT_DARK, seedkey: GREEN,
+  download: ACCENT_DARK, upload: '#0A84FF', erase: '#D70015', checkmemory: '#0A84FF',
+  routine: MUTED, transfer: FAINT, exit: MUTED, reset: MUTED, did: MUTED, nrc: '#D70015',
+}
+
+function SniffSection({ events, meta }) {
+  const [backend, setBackend] = useState('simulator')
+  const [backends, setBackends] = useState([])
+  const [baudrate, setBaudrate] = useState(500000)
+  const [extended, setExtended] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  const feedRef = useRef(null)
+
+  useEffect(() => {
+    api.getBackends().then((d) => setBackends(d.backends || [])).catch(() => {})
+  }, [])
+  useEffect(() => {
+    if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight
+  }, [events])
+
+  const running = !!meta?.running
+  const report = meta?.report
+  const isJ2534 = String(backend).startsWith('j2534') || ['tactrix', 'openport'].includes(backend)
+  const hasJ2534 = backends.some((b) => String(b.id).startsWith('j2534') && b.available)
+
+  const start = async () => {
+    setBusy(true); setErr(null)
+    try {
+      const r = await api.startSniff({ backend, baudrate: Number(baudrate), extended })
+      if (!r.started) setErr(r.error || 'Sniffer läuft bereits.')
+    } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
+  }
+  const stop = () => api.stopSniff().catch(() => {})
+
+  return (
+    <>
+      <section style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px 0' }}>
+          <span style={{ fontSize: 16, fontWeight: 700 }}>Sniffer · Fremd-Flash mitschneiden</span>
+          <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: running ? ACCENT_DARK : MUTED }}>
+            {running && <span style={{ width: 7, height: 7, borderRadius: '50%', background: ACCENT, animation: 'pulse 1.2s ease-in-out infinite' }} />}
+            {running ? `Hört mit · ${meta.frames || 0} Frames` : 'Bereit'}
+          </span>
+        </div>
+        <div style={{ padding: '4px 20px 0', fontSize: 12, color: MUTED, lineHeight: 1.5 }}>
+          Hört <b>rein passiv</b> mit, während ein anderes Werkzeug (z.&nbsp;B. Autotuner) über
+          einen geteilten OBD2-Bus liest/schreibt — <b>sendet selbst nichts</b> — und leitet
+          danach Profil&nbsp;+&nbsp;Seed/Key ab. „Simulator" fährt einen Demo-Flash zum Vorführen ohne Hardware.
+        </div>
+        <div style={{ padding: '16px 20px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 12, alignItems: 'end' }}>
+            <div>
+              <label style={fieldLabel}>Interface</label>
+              <select style={inputStyle} value={backend} disabled={running}
+                onChange={(e) => setBackend(e.target.value)}>
+                {backends.map((b) => (
+                  <option key={b.id} value={b.id} disabled={!b.available}>
+                    {b.name}{b.available ? '' : ' (nicht verfügbar)'}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={fieldLabel}>Baudrate</label>
+              <input style={inputStyle} type="number" value={baudrate} disabled={running || !isJ2534}
+                onChange={(e) => setBaudrate(e.target.value)} />
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: MUTED, paddingBottom: 9 }}>
+              <input type="checkbox" checked={extended} disabled={running || !isJ2534}
+                onChange={(e) => setExtended(e.target.checked)} />
+              29-bit
+            </label>
+          </div>
+          {isJ2534 && !hasJ2534 && (
+            <div style={{ fontSize: 11.5, color: MUTED }}>
+              Kein J2534-Gerät gefunden. Tactrix-Treiber:{' '}
+              <a href={TACTRIX_DRIVER_URL} target="_blank" rel="noreferrer" style={{ color: ACCENT, fontWeight: 600 }}>herunterladen</a>
+            </div>
+          )}
+          {err && <div style={{ fontSize: 12, color: '#D70015' }}>{err}</div>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button onClick={running ? stop : start} disabled={busy}
+              style={{ padding: '10px 22px', borderRadius: 9, fontSize: 14, fontWeight: 700, color: '#fff', background: running ? '#D70015' : ACCENT, boxShadow: running ? 'none' : '0 4px 12px -4px rgba(255,122,0,.5)' }}>
+              {running ? 'Stoppen' : 'Sniffer starten'}
+            </button>
+            <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11.5, color: FAINT }}>
+              {meta?.frames || 0} Frames · {meta?.ids || 0} CAN-IDs
+            </span>
+          </div>
+
+          <div ref={feedRef} style={{
+            maxHeight: 260, overflowY: 'auto', background: '#0B0B0C', borderRadius: 10,
+            padding: '10px 12px', fontFamily: MONO, fontSize: 12, lineHeight: 1.65,
+          }}>
+            {events.length === 0 && (
+              <div style={{ color: FAINT }}>
+                {running ? 'Warte auf Bus-Verkehr … jetzt am anderen Werkzeug lesen/schreiben starten.'
+                  : 'Noch nichts. „Sniffer starten" klicken.'}
+              </div>
+            )}
+            {events.map((e, i) => (
+              <div key={i} style={{ color: SNIFF_KIND_COLOR[e.kind] || '#E8E8ED', whiteSpace: 'pre-wrap' }}>
+                <span style={{ color: FAINT }}>[{typeof e.t === 'number' ? e.t.toFixed(3) : ''}] </span>{e.text}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {meta?.error && (
+        <section style={{ ...cardStyle, padding: '14px 18px', color: '#D70015', fontSize: 13 }}>
+          Fehler: {meta.error}
+        </section>
+      )}
+
+      {report && (
+        <section style={{ ...cardStyle, padding: '16px 20px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>Ergebnis · abgeleitet aus dem Mitschnitt</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10 }}>
+            {[['Frames', report.frames], ['Requests', report.requests], ['Sitzungen', (report.sessions || []).join(', ') || '—'],
+              ['Security', (report.securityLevels || []).join(', ') || '—'], ['erase', report.eraseRoutine || '—'],
+              ['checkMemory', report.checkMemory || '—']].map(([k, v]) => (
+              <div key={k} style={{ background: 'rgba(0,0,0,.04)', borderRadius: 9, padding: '9px 12px' }}>
+                <div style={{ fontSize: 11, color: MUTED }}>{k}</div>
+                <div style={{ fontFamily: MONO, fontSize: 13, fontWeight: 600 }}>{v}</div>
+              </div>
+            ))}
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>Seed/Key-Paare</div>
+            {(report.seedKeyPairs || []).length === 0
+              ? <div style={{ fontSize: 12.5, color: MUTED }}>keine erfasst</div>
+              : (report.seedKeyPairs || []).map((p, i) => (
+                <div key={i} style={{ fontFamily: MONO, fontSize: 13, color: GREEN }}>
+                  L{p.level}: seed={p.seed} → key={p.key}
+                </div>
+              ))}
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>Download-Blöcke (Memory-Map)</div>
+            {(report.downloadBlocks || []).length === 0
+              ? <div style={{ fontSize: 12.5, color: MUTED }}>keine erfasst</div>
+              : (report.downloadBlocks || []).map((b, i) => (
+                <div key={i} style={{ fontFamily: MONO, fontSize: 13 }}>
+                  {b.address} · {b.size} Bytes · {b.transfers} Transfers
+                </div>
+              ))}
+          </div>
+
+          {report.hasFiles && (
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              {[['profile', 'Profil (YAML)'], ['pairs', 'Seed/Key (.txt)'], ['log', 'Mitschnitt (candump)']].map(([kind, label]) => (
+                <a key={kind} href={api.sniffDownloadUrl(kind)} download
+                  style={{ padding: '9px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'rgba(0,0,0,.05)', color: '#1D1D1F', textDecoration: 'none' }}>
+                  ↓ {label}
+                </a>
+              ))}
+            </div>
+          )}
         </section>
       )}
     </>

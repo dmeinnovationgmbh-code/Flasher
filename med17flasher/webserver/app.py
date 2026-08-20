@@ -22,6 +22,10 @@ Expert / real flash:
 ``POST /api/firmware?name=`` upload a firmware file (raw body) -> {firmware:…}
 ``POST /api/expert/config``  set profile/backend/seedkey/allowWrite
 ``POST /api/expert/flash``   start the configured real flash  -> {started: bool}
+``GET  /api/sniff``          sniffer status + last derived report
+``POST /api/sniff/start``    begin a passive capture     -> {started: bool}
+``POST /api/sniff/stop``     stop it (runs the analysis)
+``GET  /api/sniff/download`` ?kind=profile|pairs|log  the derived artefact
 """
 
 from __future__ import annotations
@@ -184,6 +188,15 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(200, self._svc.measure_config())
         elif path == "/api/measure/csv":
             self._csv(self._svc.measure_csv(), "messung.csv")
+        elif path == "/api/sniff":
+            self._json(200, self._svc.sniff_config())
+        elif path == "/api/sniff/download":
+            kind = (parse_qs(urlparse(self.path).query).get("kind") or ["profile"])[0]
+            try:
+                filename, text = self._svc.sniff_download(kind)
+                self._csv(text, filename)
+            except ValueError as exc:
+                self._json(404, {"error": str(exc)})
         elif path == "/api/flash/stream":
             self._stream()
         elif path.startswith("/api/"):
@@ -267,6 +280,21 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": str(exc)})
         elif path == "/api/measure/stop":
             self._svc.stop_measure()
+            self._json(200, {"stopped": True})
+        elif path == "/api/sniff/start":
+            body = self._read_json()
+            try:
+                started = self._svc.start_sniff(
+                    backend=body.get("backend", "simulator"),
+                    baudrate=int(body.get("baudrate", 500000)),
+                    extended=bool(body.get("extended")),
+                    profile_id=body.get("profileId"),
+                )
+                self._json(200 if started else 409, {"started": started})
+            except Exception as exc:  # noqa: BLE001
+                self._json(400, {"error": str(exc)})
+        elif path == "/api/sniff/stop":
+            self._svc.stop_sniff()
             self._json(200, {"stopped": True})
         elif path == "/api/checksum/correct":
             try:

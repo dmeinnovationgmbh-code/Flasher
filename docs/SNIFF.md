@@ -99,6 +99,16 @@ med17flasher flash --dry-run --profile session.profile.yaml \
     --seedkey-store recovered.json image.bin
 ```
 
+## In the app (Sniffer tab)
+
+The same thing without the command line: open the **Sniffer** tab, pick the
+interface, and click **"Sniffer starten"**. The UDS flow decodes live in the
+panel while the other tool flashes; when it stops, the seed/key pairs, the
+memory map and the derived profile appear and download as files
+(`profile.yaml`, `pairs.txt`, the raw candump). Pick the **"Simulator"**
+interface to watch a self-driven demo flash end-to-end with no hardware — handy
+to see exactly what a real capture will look like.
+
 ## Options
 
 | flag | meaning |

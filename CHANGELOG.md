@@ -7,6 +7,15 @@ uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Sniffer tab in the app.** The passive-capture workflow is now a clickable
+  tab, not just a CLI command: pick the interface (Tactrix/J2534, SocketCAN, …),
+  hit start, and watch the UDS flow decode live (session, seed/key, download
+  addresses, transfer progress) while another tool flashes. When it ends, the
+  derived profile, the seed/key pairs and the memory map appear in the panel and
+  download as files. A **"Simulator"** interface sniffs a self-driven demo flash,
+  so the tool can be shown end-to-end with no hardware. Backed by new
+  `start_sniff`/`stop_sniff`/`sniff_download` on the service and
+  `/api/sniff/*` endpoints, streaming over the existing SSE channel.
 - **`med17flasher sniff` — reverse-engineer another flasher's session.** Split
   the OBD2 line so a Tactrix listens in parallel while an Autotuner (or any
   other tool) does the real read/write, and this records the whole exchange

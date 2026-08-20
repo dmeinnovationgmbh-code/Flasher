@@ -17,6 +17,7 @@ import glob
 import os
 import queue
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -164,6 +165,14 @@ class FlashService:
         self._measure_rate = 10.0
         self._measure_cro = 0x7E0
         self._measure_dto = 0x7E1
+
+        # Sniffer state (passive capture of another tool's read/write)
+        self._sniff_thread: Optional[threading.Thread] = None
+        self._sniff_stop = threading.Event()
+        self._sniff_backend = "simulator"
+        self._sniff_frames = 0
+        self._sniff_report: Optional[dict] = None
+        self._sniff_outdir: Optional[str] = None
 
     # ------------------------------------------------------------------ #
     # Vehicle / maps / telemetry
@@ -467,6 +476,175 @@ class FlashService:
                     close()
                 except Exception:  # noqa: BLE001
                     pass
+
+    # ------------------------------------------------------------------ #
+    # Sniffer: passively record another tool's read/write, derive a profile
+    # ------------------------------------------------------------------ #
+    @property
+    def sniffing(self) -> bool:
+        return self._sniff_thread is not None and self._sniff_thread.is_alive()
+
+    def sniff_config(self) -> dict:
+        return {
+            "running": self.sniffing,
+            "backend": self._sniff_backend,
+            "frames": self._sniff_frames,
+            "report": self._sniff_report,
+        }
+
+    def start_sniff(self, *, backend: str = "simulator", baudrate: int = 500000,
+                    extended: bool = False, profile_id: Optional[str] = None) -> bool:
+        """Begin a passive capture. The sniffer never transmits a frame.
+
+        ``backend == "simulator"`` sniffs a self-driven demo flash (a separate
+        virtual tester writes a virtual ECU while we listen) so the tool can be
+        shown end-to-end in the app with no hardware - the same thing a Tactrix
+        on a split OBD2 bus does with a real Autotuner.
+        """
+
+        if self.sniffing:
+            return False
+        profile = (self._load_profile_by_id(profile_id) if profile_id else self.profile)
+        tx_id, rx_id = profile.can.tx_id, profile.can.rx_id
+        self._sniff_backend = backend
+        self._sniff_frames = 0
+        self._sniff_report = None
+        self._sniff_stop = threading.Event()
+        self._sniff_outdir = tempfile.mkdtemp(prefix="sniff_")
+
+        demo_flash = None
+        cleanup = None
+        if backend == "simulator":
+            net = VirtualCanNetwork()
+            ecu = VirtualEcu(
+                net.new_endpoint("ecu"), profile,
+                VirtualEcuConfig(security_algorithm=profile.security.algorithm,
+                                 security_params=profile.security.params,
+                                 max_block_length=0x0102))
+            ecu.start()
+            bus = net.new_endpoint("sniffer")
+            cleanup = ecu.stop
+
+            def demo_flash() -> None:
+                try:
+                    tester = net.new_endpoint("autotuner")
+                    tp = IsoTpLayer(tester, IsoTpConfig(
+                        tx_id=tx_id, rx_id=rx_id, padding_byte=profile.can.padding_byte))
+                    uds = UdsClient(tp, UdsTiming(p2=1.0, p2_star=2.0))
+                    img = FirmwareImage()
+                    img.add_segment(0x80040000, bytes((i * 7) & 0xFF for i in range(0x1000)))
+                    img.add_segment(0x80042000, bytes((0xC0 + (i & 0x1F)) & 0xFF
+                                                      for i in range(0x400)))
+                    img.normalise()
+                    Flasher(uds, profile, ProfileSeedKey(profile)).flash(img)
+                    time.sleep(0.4)          # let the tail frames land
+                except Exception:            # noqa: BLE001
+                    log.exception("demo flash for sniff failed")
+                finally:
+                    self._sniff_stop.set()   # auto-stop -> triggers the analysis
+        else:
+            head = backend.partition(":")[0].lower()
+            if head in ("j2534", "passthru", "tactrix", "openport"):
+                bus = create_bus(backend, baudrate=baudrate, extended=extended)
+            else:
+                bus = create_bus(backend)
+
+        self._sniff_thread = threading.Thread(
+            target=self._run_sniff, args=(bus, tx_id, rx_id, demo_flash, cleanup),
+            daemon=True)
+        self._sniff_thread.start()
+        return True
+
+    def stop_sniff(self) -> None:
+        self._sniff_stop.set()
+
+    def _run_sniff(self, bus, tx_id: int, rx_id: int, demo_flash, cleanup) -> None:
+        from ..core.trace import LiveUdsTracker, analyze, capture_frames, write_candump
+
+        tracker = LiveUdsTracker()
+        seen: Dict[int, int] = {}
+        self._broadcast({"type": "sniff", "event": "started", "backend": self._sniff_backend})
+
+        def on_frame(tf) -> None:
+            self._sniff_frames += 1
+            seen[tf.arbitration_id] = seen.get(tf.arbitration_id, 0) + 1
+            for ev in tracker.feed(tf):
+                self._broadcast({"type": "sniff", "event": "flow", "kind": ev.kind,
+                                 "text": ev.text, "detail": ev.detail,
+                                 "t": round(tf.timestamp, 3)})
+            if self._sniff_frames % 25 == 0:
+                self._broadcast({"type": "sniff", "event": "stats",
+                                 "frames": self._sniff_frames, "ids": len(seen)})
+
+        try:
+            if demo_flash is not None:
+                threading.Timer(0.6, demo_flash).start()
+            frames = capture_frames(bus, stop_event=self._sniff_stop, on_frame=on_frame)
+            report = analyze(frames, tx_id=tx_id, rx_id=rx_id)
+            if report.request_count == 0 and len(seen) >= 2:
+                gtx, grx = _guess_ids(seen)
+                if gtx is not None:
+                    tx_id, rx_id = gtx, grx
+                    report = analyze(frames, tx_id=tx_id, rx_id=rx_id)
+
+            outdir = self._sniff_outdir or tempfile.mkdtemp(prefix="sniff_")
+            write_candump(frames, os.path.join(outdir, "mitschnitt.log"))
+            _dump_profile_yaml(report.to_profile(),
+                               os.path.join(outdir, "mitschnitt.profile.yaml"))
+            with open(os.path.join(outdir, "mitschnitt.pairs.txt"), "w",
+                      encoding="utf-8") as fh:
+                for _lvl, seed, key in report.seed_key_pairs:
+                    fh.write(f"{seed.hex()} {key.hex()}\n")
+
+            summary = {
+                "frames": len(frames),
+                "ids": [f"0x{i:03X}" for i in sorted(seen)],
+                "txId": f"0x{tx_id:03X}", "rxId": f"0x{rx_id:03X}",
+                "requests": report.request_count, "responses": report.response_count,
+                "sessions": [f"0x{s:02X}" for s in report.sessions],
+                "securityLevels": [f"0x{lvl:02X}" for lvl in report.security_levels],
+                "seedKeyPairs": [{"level": f"0x{lvl:02X}", "seed": s.hex(), "key": k.hex()}
+                                 for lvl, s, k in report.seed_key_pairs],
+                "eraseRoutine": (f"0x{report.erase_routine:04X}"
+                                 if report.erase_routine else None),
+                "checkMemory": (f"0x{report.check_memory_routine:04X}"
+                                if report.check_memory_routine else None),
+                "downloadBlocks": [{"address": f"0x{b.address:08X}", "size": b.size,
+                                    "transfers": b.transfers}
+                                   for b in report.download_blocks],
+                "dids": [f"0x{d:04X}" for d in report.dids],
+                "hasFiles": True,
+            }
+            self._sniff_report = summary
+            self._broadcast({"type": "sniff", "event": "report", **summary})
+        except Exception as exc:  # noqa: BLE001
+            log.exception("sniff failed")
+            self._broadcast({"type": "sniff", "event": "error", "msg": str(exc)})
+        finally:
+            try:
+                bus.close()
+            except Exception:  # noqa: BLE001
+                pass
+            if cleanup is not None:
+                try:
+                    cleanup()
+                except Exception:  # noqa: BLE001
+                    pass
+            self._broadcast({"type": "sniff", "event": "stopped",
+                             "frames": self._sniff_frames})
+
+    def sniff_download(self, kind: str):
+        """Return ``(filename, text)`` for a derived artefact (UI download)."""
+
+        names = {"log": "mitschnitt.log", "profile": "mitschnitt.profile.yaml",
+                 "pairs": "mitschnitt.pairs.txt"}
+        if kind not in names or not self._sniff_outdir:
+            raise ValueError("unbekannter Download")
+        path = os.path.join(self._sniff_outdir, names[kind])
+        if not os.path.isfile(path):
+            raise ValueError("noch nichts aufgenommen")
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            return names[kind], fh.read()
 
     # ------------------------------------------------------------------ #
     # Real ("expert") flash: profile + backend + firmware + seed/key
@@ -1082,6 +1260,43 @@ def _human_size(n: int) -> str:
     if n >= 1024:
         return f"{n // 1024}K"
     return f"{n}B"
+
+
+def _guess_ids(seen: Dict[int, int]):
+    """Best (request, response) diagnostic id pair from observed traffic.
+
+    UDS on a powertrain bus is almost always an id pair 8 apart; pick the
+    busiest such pair, else the two most active ids.
+    """
+
+    ids = set(seen)
+    best = None
+    for tx in sorted(ids):
+        rx = tx + 8
+        if rx in ids:
+            score = seen[tx] + seen[rx]
+            if best is None or score > best[0]:
+                best = (score, tx, rx)
+    if best is not None:
+        return best[1], best[2]
+    ranked = sorted(seen.items(), key=lambda kv: -kv[1])
+    if len(ranked) >= 2:
+        return min(ranked[0][0], ranked[1][0]), max(ranked[0][0], ranked[1][0])
+    return None, None
+
+
+def _dump_profile_yaml(profile, path: str) -> None:
+    data = profile.to_dict()
+    try:
+        import yaml  # type: ignore
+
+        with open(path, "w", encoding="utf-8") as fh:
+            yaml.safe_dump(data, fh, sort_keys=False)
+    except ImportError:
+        import json as _json
+
+        with open(path, "w", encoding="utf-8") as fh:
+            _json.dump(data, fh, indent=2, default=str)
 
 
 def _display_from_profile(profile: EcuProfile) -> Dict[str, Any]:

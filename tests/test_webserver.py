@@ -546,3 +546,58 @@ def test_seedkey_source_bridge_is_selectable(monkeypatch):
         {"source": "bridge", "path": "v.dll", "python32": "C:\\py32\\python.exe"})
     assert isinstance(resolver, FakeBridge)
     assert seen["kw"]["python32"] == "C:\\py32\\python.exe"
+
+
+def _drain_until_sniff_stopped(sub, timeout=30):
+    import time
+    events = []
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            ev = sub.q.get(timeout=5)
+        except queue.Empty:
+            break
+        events.append(ev)
+        if ev.get("type") == "sniff" and ev.get("event") == "stopped":
+            break
+    return events
+
+
+def test_sniff_simulator_end_to_end():
+    """The Sniffer tab's backend: sniff a self-driven demo flash and derive the
+    seed/key + download blocks purely from the (passively observed) traffic."""
+    svc = FlashService(throttle_kbs=0)
+    sub = svc.subscribe()
+    try:
+        assert svc.start_sniff(backend="simulator",
+                               profile_id="med17_7_5_demo") is True
+        assert svc.start_sniff(backend="simulator") is False   # already running
+        events = _drain_until_sniff_stopped(sub)
+    finally:
+        svc.unsubscribe(sub)
+
+    sniff = [e for e in events if e.get("type") == "sniff"]
+    stages = {e["event"] for e in sniff}
+    assert {"started", "flow", "report", "stopped"} <= stages
+
+    flow_kinds = {e["kind"] for e in sniff if e["event"] == "flow"}
+    assert {"seedkey", "download"} <= flow_kinds
+
+    report = next(e for e in sniff if e["event"] == "report")
+    pairs = report["seedKeyPairs"]
+    assert any(p["seed"] == "11223344" for p in pairs)
+    addrs = {b["address"] for b in report["downloadBlocks"]}
+    assert "0x80040000" in addrs and "0x80042000" in addrs
+
+    # the derived artefacts are downloadable
+    name, yaml_text = svc.sniff_download("profile")
+    assert name.endswith(".yaml") and "MED17" in yaml_text
+    _, pairs_text = svc.sniff_download("pairs")
+    assert "11223344" in pairs_text
+
+
+def test_sniff_config_reports_idle():
+    svc = FlashService(throttle_kbs=0)
+    cfg = svc.sniff_config()
+    assert cfg["running"] is False
+    assert cfg["report"] is None

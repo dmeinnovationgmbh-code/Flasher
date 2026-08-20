@@ -69,6 +69,18 @@ export const stopMeasure = () =>
   fetch('/api/measure/stop', { method: 'POST' }).then(json)
 export const measureCsvUrl = () => '/api/measure/csv'
 
+/* ---- Sniffer (passive capture of another tool's read/write) ------------- */
+export const getSniff = () => fetch('/api/sniff').then(json)
+export const startSniff = (cfg) =>
+  fetch('/api/sniff/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg || {}),
+  }).then((res) => res.json())
+export const stopSniff = () =>
+  fetch('/api/sniff/stop', { method: 'POST' }).then(json)
+export const sniffDownloadUrl = (kind) => `/api/sniff/download?kind=${kind}`
+
 // --- Firmware repository (file server) ------------------------------------
 export const getRepo = () => fetch('/api/repo').then(json)
 export const setRepo = (cfg) =>
