@@ -326,6 +326,16 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": str(exc)})
             except Exception as exc:  # noqa: BLE001
                 self._json(502, {"error": str(exc)})
+        elif path == "/api/seedkey/solve":
+            try:
+                self._json(200, self._svc.solve_seedkey())
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+        elif path == "/api/seedkey/save":
+            try:
+                self._json(200, self._svc.save_seedkey_store())
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
         elif path == "/api/checksum/correct":
             try:
                 self._json(200, self._svc.checksum_correct())

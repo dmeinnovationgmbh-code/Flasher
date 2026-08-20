@@ -7,10 +7,17 @@ pairs** from it. It is the €0 alternative to buying a MED17.7.5 protocol packa
 you already own the car, the other tool and a Tactrix — this turns one observed
 session into a working profile for *this* flasher.
 
-> It only ever **listens**. It never transmits a single CAN frame. That is not
-> a nicety — while the other tool is mid-write, a second master injecting frames
-> on the same bus could corrupt the transfer and brick the ECU. Sniffing is
-> safe precisely because it is silent.
+> It only ever **listens**: it injects no frames and never acts as a tester.
+> That is not a nicety — while the other tool is mid-write, a second master
+> injecting frames on the same bus could corrupt the transfer and brick the
+> ECU. Sniffing is safe precisely because it never speaks.
+>
+> One honest caveat: a normal CAN controller still *acknowledges* frames it
+> receives, driving the ACK bit at the hardware layer — so it is not
+> electrically silent. That ACK is part of normal bus operation (every node
+> does it) and does not disturb the flash. For a truly silent node, use an
+> interface in **listen-only** mode (SocketCAN `CAN_CTRLMODE_LISTENONLY`, or a
+> J2534 device that exposes it).
 
 ## The wiring: a split OBD2 line
 

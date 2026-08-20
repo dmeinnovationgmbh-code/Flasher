@@ -646,3 +646,35 @@ def test_full_ecu_backup_and_download():
     assert svc.expert_config()["backup"] is not None
     path, fn = svc.backup_file()
     assert fn.endswith(".bin") and os.path.getsize(path) == 0x3000
+
+
+def test_solve_and_save_seedkey_store_wires_into_flash():
+    from med17flasher.seedkey import SeedKeyStore, compute_key
+    svc = FlashService(throttle_kbs=0)
+    for s in ("11223344", "deadbeef", "00000001"):
+        k = compute_key("xor", bytes.fromhex(s), params={"k": 0x1234ABCD}).hex()
+        svc._seedkey_pairs.append((0x11, s, k))
+    res = svc.solve_seedkey()
+    assert res["recovered"] and res["recovered"]["algorithm"] == "xor"
+    save = svc.save_seedkey_store()
+    # the recovered algorithm is now the expert-flash seed/key source
+    assert svc._expert_seedkey["source"] == "store"
+    store = SeedKeyStore.load(save["path"])
+    assert store.compute("MED17.7.5", 0x11, bytes.fromhex("11223344")) == \
+        compute_key("xor", bytes.fromhex("11223344"), params={"k": 0x1234ABCD})
+
+
+def test_solve_seedkey_ambiguity_guard():
+    svc = FlashService(throttle_kbs=0)
+    svc._seedkey_pairs = [(0x11, "11223344", "8369ee49")]  # a single seed
+    assert svc.solve_seedkey()["recovered"] is None
+
+
+def test_preflight_includes_medc17_checksum_check():
+    svc = FlashService(throttle_kbs=0)
+    svc.set_firmware("cal.bin", bytes([0x60]) + bytes(0x2FFE) + bytes([0xDE]))
+    svc.configure_expert(profile_id="med17_7_5_demo", backend="simulator",
+                         seedkey={"source": "profile"})
+    rep = svc.preflight_expert()
+    cs = [c for c in rep["checks"] if c["name"] == "MEDC17-Prüfsummen"]
+    assert cs and cs[0]["fatal"] is False   # advisory, never blocks

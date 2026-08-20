@@ -178,6 +178,11 @@ class FlashService:
         # last full-ECU backup taken (path + crc32), for the pre-write gate.
         self._derived_profile: Optional[EcuProfile] = None
         self._backup: Optional[dict] = None
+        # Seed/key pairs accumulated across ALL sniffs this session (dedup by
+        # seed), so several sessions with different seeds can recover the
+        # algorithm; stored as (level, seed_hex, key_hex).
+        self._seedkey_pairs: List[tuple] = []
+        self._seedkey_solution: Optional[dict] = None
 
     # ------------------------------------------------------------------ #
     # Vehicle / maps / telemetry
@@ -620,6 +625,16 @@ class FlashService:
                 "dids": [f"0x{d:04X}" for d in report.dids],
                 "hasFiles": True,
             }
+            # Accumulate seed/key pairs across sniffs (dedup by seed) so the
+            # solver can recover the algorithm from several sessions.
+            seen_seeds = {s for _lvl, s, _k in self._seedkey_pairs}
+            for lvl, seed, key in report.seed_key_pairs:
+                if seed.hex() not in seen_seeds:
+                    self._seedkey_pairs.append((lvl, seed.hex(), key.hex()))
+                    seen_seeds.add(seed.hex())
+            summary["pairsAccumulated"] = len(self._seedkey_pairs)
+            summary["distinctSeeds"] = len({s for _lvl, s, _k in self._seedkey_pairs})
+
             self._sniff_report = summary
             self._broadcast({"type": "sniff", "event": "report", **summary})
         except Exception as exc:  # noqa: BLE001
@@ -650,6 +665,79 @@ class FlashService:
             raise ValueError("noch nichts aufgenommen")
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             return names[kind], fh.read()
+
+    def solve_seedkey(self) -> dict:
+        """Try to recover the seed/key algorithm from the accumulated pairs.
+
+        Only claims a result when it is unambiguous: at least two pairs with
+        DIFFERENT seeds and exactly one algorithm reproducing them all (the
+        linear families match any single pair trivially).
+        """
+
+        from ..seedkey import SeedKeySolver
+        from ..seedkey.solver import SeedKeyPair
+
+        pairs = list(self._seedkey_pairs)
+        if not pairs:
+            raise ValueError("keine Seed/Key-Paare — zuerst sniffen")
+        solver_pairs = [SeedKeyPair(bytes.fromhex(s), bytes.fromhex(k))
+                        for _lvl, s, k in pairs]
+        levels = {lvl for lvl, _s, _k in pairs}
+        level = next(iter(levels)) if len(levels) == 1 else 0
+        results = SeedKeySolver(solver_pairs).solve(level=level)
+        full = [r for r in results if r.is_full_match]
+        distinct = {s for _l, s, _k in pairs}
+
+        recovered = None
+        if len(distinct) >= 2 and len(full) == 1:
+            recovered = {"algorithm": full[0].algorithm, "params": full[0].params,
+                         "level": level}
+        self._seedkey_solution = recovered
+        if recovered is not None:
+            msg = f"Algorithmus erkannt: {recovered['algorithm']} {recovered['params']}"
+        elif len(distinct) < 2:
+            msg = (f"{len(pairs)} Paar(e), aber nur {len(distinct)} unterschiedliche(r) "
+                   f"Seed(s) — noch eine Session mit anderem Seed sniffen.")
+        elif len(full) > 1:
+            msg = (f"mehrdeutig: {len(full)} Algorithmen passen "
+                   f"({', '.join(r.algorithm for r in full)}) — mehr Paare sniffen.")
+        else:
+            msg = "kein Algorithmus reproduziert alle Paare — mehr/andere Seeds sniffen."
+        return {
+            "pairs": len(pairs), "distinctSeeds": len(distinct),
+            "recovered": ({"algorithm": recovered["algorithm"],
+                           "params": recovered["params"],
+                           "level": f"0x{recovered['level']:02X}"} if recovered else None),
+            "candidates": [{"algorithm": r.algorithm, "full": r.is_full_match}
+                           for r in results[:5]],
+            "message": msg,
+        }
+
+    def save_seedkey_store(self) -> dict:
+        """Persist the recovered algorithm as a seed/key store and wire it into
+        the expert flash, so a derived-profile flash computes keys itself."""
+
+        res = self.solve_seedkey()
+        if res["recovered"] is None:
+            raise ValueError("noch kein eindeutiger Algorithmus — " + res["message"])
+        recovered = self._seedkey_solution
+
+        from ..seedkey import SeedKeyStore
+        from ..seedkey.store import SeedKeyEntry
+
+        prof = self._expert_profile or self.profile
+        entry = SeedKeyEntry(ecu=prof.name, level=int(recovered["level"]),
+                             algorithm=recovered["algorithm"],
+                             params=recovered["params"],
+                             note="recovered from sniffed pairs")
+        store = SeedKeyStore()
+        store.add(entry)
+        out_dir = tempfile.mkdtemp(prefix="seedkey_")
+        path = os.path.join(out_dir, "seedkey.json")
+        store.save(path)
+        self._expert_seedkey = {"source": "store", "path": path}
+        return {"saved": True, "path": path, "algorithm": recovered["algorithm"],
+                "seedkey": self._expert_seedkey}
 
     # ------------------------------------------------------------------ #
     # Real ("expert") flash: profile + backend + firmware + seed/key
@@ -1040,15 +1128,46 @@ class FlashService:
             except Exception:  # noqa: BLE001
                 pass
 
+        checks = [{"name": c.name, "ok": c.ok, "detail": c.detail, "fatal": c.fatal}
+                  for c in report.checks]
+        # Non-fatal MEDC17 internal-checksum check on the image about to be
+        # written: a modified calibration flashed with stale checksums won't
+        # boot. Offsets are a documented template until pinned to a real dump,
+        # so this only warns — it never blocks.
+        checks.append(self._medc17_check())
+
         return {
             "ok": report.ok,
             "summary": report.summary(),
             "durationMs": int(report.duration * 1000),
             "blocks": report.blocks,
-            "checks": [{"name": c.name, "ok": c.ok, "detail": c.detail,
-                        "fatal": c.fatal} for c in report.checks],
+            "checks": checks,
             "simulator": is_sim,
         }
+
+    def _medc17_check(self) -> dict:
+        """Verify MEDC17 internal checksums on the uploaded image (advisory)."""
+
+        name = "MEDC17-Prüfsummen"
+        try:
+            from ..core import medc17_checksum as mc
+
+            raw = (self._uploaded or {}).get("raw") or b""
+            results = mc.verify(raw)
+            if not results:
+                return {"name": name, "ok": True, "fatal": False,
+                        "detail": "keine Blöcke erkannt (Template-Offsets — an echtem "
+                                  "Dump zu prüfen)"}
+            bad = [r for r in results if not r.ok]
+            if bad:
+                return {"name": name, "ok": False, "fatal": False,
+                        "detail": f"{len(bad)}/{len(results)} ungültig — vor dem "
+                                  f"Schreiben im Diagnose-Tab korrigieren"}
+            return {"name": name, "ok": True, "fatal": False,
+                    "detail": f"{len(results)} Region(en) gültig"}
+        except Exception as exc:  # noqa: BLE001
+            return {"name": name, "ok": True, "fatal": False,
+                    "detail": f"nicht prüfbar ({exc})"}
 
     def start_expert_flash(self) -> bool:
         """Start a real flash using the configured profile/backend/firmware."""

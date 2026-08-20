@@ -87,6 +87,13 @@ export const importDerivedProfile = (source = 'sniff') =>
     body: JSON.stringify({ source }),
   }).then(json)
 
+/* ---- Seed/Key recovery from sniffed pairs -------------------------------- */
+const postOrThrow = (path) =>
+  fetch(path, { method: 'POST' }).then((res) =>
+    res.ok ? res.json() : res.json().then((e) => Promise.reject(new Error(e.error || res.statusText))))
+export const solveSeedkey = () => postOrThrow('/api/seedkey/solve')
+export const saveSeedkeyStore = () => postOrThrow('/api/seedkey/save')
+
 /* ---- Full ECU backup (before writing) ----------------------------------- */
 export const runBackup = () =>
   fetch('/api/backup', { method: 'POST' }).then((res) =>

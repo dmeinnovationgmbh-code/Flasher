@@ -867,9 +867,11 @@ def cmd_sniff(args) -> int:
 
     The intended rig: split the OBD2 line so the ECU sees both the *other*
     tool (e.g. an Autotuner) and our Tactrix at once. The other tool does the
-    real read/write; we only listen. Because this never transmits a single
-    frame it cannot disturb that session - critical, since two masters fighting
-    on one bus mid-write would brick the ECU. Live UDS decode gives you
+    real read/write; we only listen. We inject no frames and never act as a
+    tester, so we cannot disturb that session - critical, since two masters
+    fighting on one bus mid-write would brick the ECU. (A CAN controller still
+    ACKs received frames electrically; use a listen-only interface for true
+    silence.) Live UDS decode gives you
     confidence it is really capturing; when it ends we reassemble the whole
     recording and derive the ECU profile (memory map, routines) and the
     seed/key pairs, exactly like `analyze-trace`.
@@ -912,7 +914,7 @@ def cmd_sniff(args) -> int:
 
     where = "simulator" if getattr(args, "simulator", False) else args.backend
     print(f"Sniffe passiv auf {where} "
-          f"(nur lesen, sendet NICHTS) - {args.seconds or '∞'}s, Ctrl+C stoppt.")
+          f"(nur lesen, injiziert keine Frames) - {args.seconds or '∞'}s, Ctrl+C stoppt.")
     print("  Starte jetzt am anderen Tool (Autotuner) den Lese-/Schreibvorgang.\n")
     try:
         try:

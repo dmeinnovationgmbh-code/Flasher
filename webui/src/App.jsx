@@ -982,6 +982,9 @@ function SniffSection({ events, meta, onUseForFlash }) {
   const [err, setErr] = useState(null)
   const [staging, setStaging] = useState(false)
   const [stageMsg, setStageMsg] = useState(null)
+  const [solving, setSolving] = useState(false)
+  const [solveRes, setSolveRes] = useState(null)
+  const [solveMsg, setSolveMsg] = useState(null)
   const feedRef = useRef(null)
 
   useEffect(() => {
@@ -1014,6 +1017,21 @@ function SniffSection({ events, meta, onUseForFlash }) {
       setStageMsg({ ok: false, t: String(e.message || e) })
     } finally { setStaging(false) }
   }
+  const solveSK = async () => {
+    setSolving(true); setSolveMsg(null)
+    try {
+      const r = await api.solveSeedkey()
+      setSolveRes(r)
+      setSolveMsg({ ok: !!r.recovered, t: r.message })
+    } catch (e) { setSolveMsg({ ok: false, t: String(e.message || e) }) } finally { setSolving(false) }
+  }
+  const adoptSK = async () => {
+    setSolving(true)
+    try {
+      const r = await api.saveSeedkeyStore()
+      setSolveMsg({ ok: true, t: `Übernommen: ${r.algorithm} → als Seed/Key-Quelle im Expert-Flash gesetzt.` })
+    } catch (e) { setSolveMsg({ ok: false, t: String(e.message || e) }) } finally { setSolving(false) }
+  }
 
   return (
     <>
@@ -1027,8 +1045,10 @@ function SniffSection({ events, meta, onUseForFlash }) {
         </div>
         <div style={{ padding: '4px 20px 0', fontSize: 12, color: MUTED, lineHeight: 1.5 }}>
           Hört <b>rein passiv</b> mit, während ein anderes Werkzeug (z.&nbsp;B. Autotuner) über
-          einen geteilten OBD2-Bus liest/schreibt — <b>sendet selbst nichts</b> — und leitet
-          danach Profil&nbsp;+&nbsp;Seed/Key ab. „Simulator" fährt einen Demo-Flash zum Vorführen ohne Hardware.
+          einen geteilten OBD2-Bus liest/schreibt — <b>injiziert keine Frames</b>, agiert nie als
+          Tester — und leitet danach Profil&nbsp;+&nbsp;Seed/Key ab. (Ein CAN-Controller quittiert
+          empfangene Frames elektrisch mit dem ACK-Bit; für echte Funkstille braucht es ein
+          Interface im Listen-Only-Modus.) „Simulator" fährt einen Demo-Flash zum Vorführen ohne Hardware.
         </div>
         <div style={{ padding: '16px 20px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 12, alignItems: 'end' }}>
@@ -1119,6 +1139,28 @@ function SniffSection({ events, meta, onUseForFlash }) {
                   L{p.level}: seed={p.seed} → key={p.key}
                 </div>
               ))}
+            {(report.pairsAccumulated > 0) && (
+              <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 11.5, color: MUTED }}>
+                  gesammelt über alle Sessions: {report.pairsAccumulated} Paar(e), {report.distinctSeeds} versch. Seed(s)
+                </span>
+                <button onClick={solveSK} disabled={solving}
+                  style={{ padding: '7px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, border: '1px solid rgba(0,0,0,.15)', background: '#fff' }}>
+                  {solving ? '…' : 'Algorithmus lösen'}
+                </button>
+                {solveRes?.recovered && (
+                  <button onClick={adoptSK} disabled={solving}
+                    style={{ padding: '7px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 700, color: '#fff', background: ACCENT }}>
+                    Als Seed/Key übernehmen
+                  </button>
+                )}
+                {solveMsg && (
+                  <span style={{ fontSize: 12, color: solveMsg.ok ? GREEN : '#8A4B00', flexBasis: '100%' }}>
+                    {solveMsg.t}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           <div>

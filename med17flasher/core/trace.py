@@ -397,7 +397,9 @@ def capture_frames(
 
     Records until ``seconds`` elapse, ``stop_event`` is set, or ``max_frames``
     is reached. Feed the returned frames (or a saved candump) to :func:`analyze`.
-    This is read-only - it never transmits anything.
+    This is read-only - the software never transmits (only recv). Note a real
+    CAN controller still ACKs received frames at the hardware layer; use a
+    listen-only-capable interface if even that must be avoided.
     """
 
     frames: List[TraceFrame] = []

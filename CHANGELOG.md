@@ -7,6 +7,18 @@ uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Recover the seed/key algorithm in the app.** The Sniffer accumulates the
+  seed/key pairs across every session (dedup by seed); a **"Algorithmus lösen"**
+  button runs the solver and, when it is unambiguous (≥2 different seeds, one
+  algorithm reproducing them all), **"Als Seed/Key übernehmen"** saves a store
+  and wires it straight into the expert flash — so a sniff-derived-profile flash
+  computes its own keys for fresh seeds. New service `solve_seedkey()` /
+  `save_seedkey_store()` and `POST /api/seedkey/solve`, `POST /api/seedkey/save`.
+- **Preflight now checks the MEDC17 internal checksums** of the image about to
+  be written (advisory, never blocking): a modified calibration flashed with
+  stale checksums won't boot, so the rehearsal warns if any region is invalid.
+  Offsets remain a documented template until pinned to a real dump — the check
+  says so rather than pretending certainty.
 - **The sniff → flash loop is now closed in the app.** A sniff derives an ECU
   profile (CAN ids + memory map); a **"Für Expert-Flash verwenden"** button on
   the result stages it as a `derived:sniff` profile and jumps to the Flashen
@@ -32,7 +44,7 @@ uses [Semantic Versioning](https://semver.org/).
 - **`med17flasher sniff` — reverse-engineer another flasher's session.** Split
   the OBD2 line so a Tactrix listens in parallel while an Autotuner (or any
   other tool) does the real read/write, and this records the whole exchange
-  **completely passively — it never transmits a frame**, which is what makes it
+  **completely passively — it injects no frames and never acts as a tester**, which is what makes it
   safe to run alongside a live write. It decodes the UDS flow live (session,
   the seed and key of each Security Access — paired automatically —, each
   RequestDownload address/size, transfer progress, erase/checkMemory, ECUReset)

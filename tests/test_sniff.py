@@ -195,5 +195,5 @@ def test_cli_sniff_simulator_runs_and_reports_empty(capsys):
                        "-o", os.path.join(d, "s.log"), "--no-analyze"])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "sendet NICHTS" in out
+        assert "injiziert keine Frames" in out
         assert os.path.isfile(os.path.join(d, "s.log"))
