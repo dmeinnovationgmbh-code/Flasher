@@ -113,6 +113,7 @@ med17flasher scan           read-only ECU reconnaissance (sessions/DIDs/seeds)
 med17flasher xcp            measure/log live ECU values over XCP (poll or DAQ)
 med17flasher a2l            read an ASAP2/A2L file and emit XCP signal specs
 med17flasher capture        passively record CAN frames to a candump log
+med17flasher sniff          passively sniff another tool's read/write (Tactrix on a split bus) and derive the profile + seed/key
 med17flasher analyze-trace  derive a profile + seed/key pairs from a CAN trace
 med17flasher analyze-firmware detect program regions in a firmware dump
 med17flasher checksum       verify/correct MEDC17 internal flash checksums

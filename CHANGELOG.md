@@ -7,6 +7,28 @@ uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`med17flasher sniff` — reverse-engineer another flasher's session.** Split
+  the OBD2 line so a Tactrix listens in parallel while an Autotuner (or any
+  other tool) does the real read/write, and this records the whole exchange
+  **completely passively — it never transmits a frame**, which is what makes it
+  safe to run alongside a live write. It decodes the UDS flow live (session,
+  the seed and key of each Security Access — paired automatically —, each
+  RequestDownload address/size, transfer progress, erase/checkMemory, ECUReset)
+  so you can see it is really capturing, then reassembles the full recording and
+  emits a derived **ECU profile** (CAN ids, security level, routine ids, memory
+  map) and the **seed/key pairs**. One session lets you replay the write; a few
+  (different seeds) feed `seedkey-solve` to recover the key algorithm. This is
+  the €0 alternative to buying a MED17.7.5 protocol package. New
+  `LiveUdsTracker` in `core/trace.py` (streaming ISO-TP reassembly + UDS decode)
+  with its own tests. See [`docs/SNIFF.md`](docs/SNIFF.md).
+- **The Windows installer now installs the Tactrix / J2534 driver for you.**
+  Drop the official Tactrix driver installer into `packaging/drivers/` before
+  building; the app installer bundles it and runs it silently after copying the
+  app, so the Openport 2.0 works right after setup with no separate download.
+  Presence is detected at build time, so a build without a driver committed is
+  unaffected; a checkbox (ticked by default) lets the user skip it, and a
+  `_silent_args.txt` override handles non-NSIS installers. See
+  `packaging/drivers/README.txt`.
 - **Preflight / dry run — rehearse a flash without writing anything.** Everything
   up to the point of no return runs for real: the bus opens, the ECU answers,
   the firmware is checked against the profile (including documented first/last

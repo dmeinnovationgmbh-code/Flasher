@@ -764,6 +764,193 @@ def cmd_capture(args) -> int:
         bus.close()
 
 
+def cmd_sniff(args) -> int:
+    """Passively sniff another flasher's read/write session and reverse it.
+
+    The intended rig: split the OBD2 line so the ECU sees both the *other*
+    tool (e.g. an Autotuner) and our Tactrix at once. The other tool does the
+    real read/write; we only listen. Because this never transmits a single
+    frame it cannot disturb that session - critical, since two masters fighting
+    on one bus mid-write would brick the ECU. Live UDS decode gives you
+    confidence it is really capturing; when it ends we reassemble the whole
+    recording and derive the ECU profile (memory map, routines) and the
+    seed/key pairs, exactly like `analyze-trace`.
+    """
+
+    import threading as _threading
+
+    from .core import capture_frames, write_candump
+    from .core.trace import LiveUdsTracker, analyze
+
+    profile = _load_profile_arg(args.profile)
+    tx_id = args.tx if args.tx is not None else profile.can.tx_id
+    rx_id = args.rx if args.rx is not None else profile.can.rx_id
+
+    try:
+        bus, sim = _open_sniff_bus(args, profile)
+    except Exception as exc:  # noqa: BLE001
+        print(f"cannot open the sniff interface: {exc}", file=sys.stderr)
+        print("  tip: `med17flasher backends` lists installed J2534 interfaces; "
+              "`med17flasher j2534 --listen 5` proves the wiring first.",
+              file=sys.stderr)
+        return 1
+
+    tracker = LiveUdsTracker()
+    stop = _threading.Event()
+    seen_ids: dict = {}
+    counter = {"n": 0}
+
+    def on_frame(tf):
+        counter["n"] += 1
+        seen_ids[tf.arbitration_id] = seen_ids.get(tf.arbitration_id, 0) + 1
+        for ev in tracker.feed(tf):
+            # Redraw over the running frame counter, then reprint it.
+            sys.stdout.write("\r" + " " * 48 + "\r")
+            print(f"  [{tf.timestamp:9.3f}] {ev.text}")
+        if counter["n"] % 25 == 0:
+            sys.stdout.write(f"\r  ... {counter['n']} Frames, "
+                             f"{len(seen_ids)} CAN-IDs mitgeschnitten")
+            sys.stdout.flush()
+
+    where = "simulator" if getattr(args, "simulator", False) else args.backend
+    print(f"Sniffe passiv auf {where} "
+          f"(nur lesen, sendet NICHTS) - {args.seconds or '∞'}s, Ctrl+C stoppt.")
+    print("  Starte jetzt am anderen Tool (Autotuner) den Lese-/Schreibvorgang.\n")
+    try:
+        try:
+            frames = capture_frames(bus, seconds=args.seconds, stop_event=stop,
+                                    on_frame=on_frame)
+        except KeyboardInterrupt:
+            stop.set()
+            frames = capture_frames(bus, seconds=0.0, stop_event=stop)  # drain
+    finally:
+        if sim:
+            sim.stop()
+        bus.close()
+
+    sys.stdout.write("\r" + " " * 48 + "\r")
+    print(f"\nMitschnitt beendet: {len(frames)} Frames, {len(seen_ids)} CAN-IDs.")
+    if seen_ids:
+        top = sorted(seen_ids.items(), key=lambda kv: -kv[1])[:8]
+        print("  aktivste IDs: "
+              + ", ".join(f"0x{i:03X}(x{c})" for i, c in top))
+
+    write_candump(frames, args.output)
+    print(f"  Rohmitschnitt -> {args.output}")
+
+    if args.no_analyze or not frames:
+        if not frames:
+            print("  keine Frames - Zuendung an? OBD-Kabel/Splitter? richtige Baudrate "
+                  f"(--baudrate, aktuell {args.baudrate})? richtiger --backend?")
+        return 0
+
+    # Auto-detect the busiest request/response id pair if the profile's guess
+    # produced nothing - the sniffed tool may use non-standard addressing.
+    report = analyze(frames, tx_id=tx_id, rx_id=rx_id)
+    if report.request_count == 0 and len(seen_ids) >= 2:
+        guess_tx, guess_rx = _guess_uds_ids(seen_ids)
+        if guess_tx is not None and (guess_tx, guess_rx) != (tx_id, rx_id):
+            print(f"  keine UDS-Requests auf 0x{tx_id:03X} - versuche erkannte "
+                  f"IDs 0x{guess_tx:03X}/0x{guess_rx:03X}")
+            tx_id, rx_id = guess_tx, guess_rx
+            report = analyze(frames, tx_id=tx_id, rx_id=rx_id)
+
+    print(f"\nAnalyse (Request 0x{tx_id:03X} / Response 0x{rx_id:03X}):")
+    print(f"  {report.request_count} Requests / {report.response_count} Responses")
+    print(f"  Sitzungen        : {[hex(s) for s in report.sessions]}")
+    print(f"  Security-Level    : {[hex(lvl) for lvl in report.security_levels]}")
+    print(f"  Seed/Key-Paare    : {len(report.seed_key_pairs)}")
+    for level, seed, key in report.seed_key_pairs:
+        print(f"      L0x{level:02X}: seed={seed.hex()} key={key.hex()}")
+    print(f"  erase-Routine     : "
+          f"{hex(report.erase_routine) if report.erase_routine else '-'}")
+    print(f"  checkMemory       : "
+          f"{hex(report.check_memory_routine) if report.check_memory_routine else '-'}")
+    print(f"  Download-Bloecke  : {len(report.download_blocks)}")
+    for b in report.download_blocks:
+        print(f"      0x{b.address:08X}  {b.size} Bytes  ({b.transfers} Transfers)")
+    if report.dids:
+        print(f"  gelesene DIDs     : {[hex(d) for d in report.dids]}")
+
+    emit_profile = args.emit_profile or (os.path.splitext(args.output)[0] + ".profile.yaml")
+    profile_out = report.to_profile()
+    _dump_profile(profile_out, emit_profile)
+    print(f"\n  abgeleitetes Profil -> {emit_profile}")
+
+    if report.seed_key_pairs:
+        emit_pairs = args.emit_pairs or (os.path.splitext(args.output)[0] + ".pairs.txt")
+        with open(emit_pairs, "w", encoding="utf-8") as fh:
+            for level, seed, key in report.seed_key_pairs:
+                fh.write(f"{seed.hex()} {key.hex()}\n")
+        print(f"  Seed/Key-Paare   -> {emit_pairs}")
+        try:
+            from .seedkey import SeedKeySolver
+
+            solver_pairs = report.seed_key_pairs_for_solver()
+            distinct = {p.seed for p in solver_pairs}
+            levels = {lvl for lvl, _s, _k in report.seed_key_pairs}
+            level = next(iter(levels)) if len(levels) == 1 else 0
+            full = [r for r in SeedKeySolver(solver_pairs).solve(level=level)
+                    if r.is_full_match]
+            if len(distinct) >= 2 and len(full) == 1:
+                print(f"  Seed/Key-Algorithmus erkannt: {full[0].algorithm} "
+                      f"{full[0].params}")
+            else:
+                print(f"  {len(solver_pairs)} Paar(e) extrahiert; fuer die "
+                      f"Algorithmus-Rekonstruktion ein paar mehr (andere Seeds) "
+                      f"sniffen, dann: med17flasher seedkey-solve --pairs {emit_pairs}")
+        except Exception:  # noqa: BLE001
+            pass
+
+    print("\n  Naechster Schritt: Profil pruefen und mit "
+          f"`med17flasher flash --dry-run --profile {emit_profile} ...` einen "
+          "risikofreien Probelauf fahren.")
+    return 0
+
+
+def _guess_uds_ids(seen_ids: dict):
+    """Guess the (request, response) diagnostic id pair from observed traffic.
+
+    UDS on a powertrain bus is almost always an id pair 8 apart (0x7E0/0x7E8,
+    0x7E1/0x7E9, ...). Pick the busiest such pair; fall back to the two most
+    active ids.
+    """
+
+    ids = set(seen_ids)
+    best = None
+    for tx in sorted(ids):
+        rx = tx + 8
+        if rx in ids:
+            score = seen_ids[tx] + seen_ids[rx]
+            if best is None or score > best[0]:
+                best = (score, tx, rx)
+    if best is not None:
+        return best[1], best[2]
+    ranked = sorted(seen_ids.items(), key=lambda kv: -kv[1])
+    if len(ranked) >= 2:
+        a, b = ranked[0][0], ranked[1][0]
+        return (min(a, b), max(a, b))
+    return None, None
+
+
+def _open_sniff_bus(args, profile):
+    """Open a passive listening bus for `sniff`, defaulting to J2534/Tactrix."""
+
+    if getattr(args, "simulator", False):
+        return _open_bus(args, profile)
+
+    backend = (args.backend or "j2534").strip()
+    head = backend.partition(":")[0].lower()
+    if head in ("j2534", "passthru", "tactrix", "openport"):
+        # Route through create_bus so the 32-bit bridge fallback applies, and
+        # carry the device/baudrate/extended options the user gave us.
+        target = backend.partition(":")[2] or getattr(args, "device", "") or ""
+        head = "j2534" if head in ("j2534", "passthru") else head
+        spec = f"{head}:{target}" if target else head
+        return create_bus(spec, baudrate=args.baudrate, extended=args.extended), None
+    return create_bus(backend), None
+
+
 def cmd_seedkey(args) -> int:
     seed = bytes.fromhex(args.seed.replace(" ", ""))
     params = {}
@@ -1416,6 +1603,44 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seconds", type=float, default=None, help="capture duration (default: until Ctrl+C)")
     p.add_argument("--analyze", action="store_true", help="quick-analyze the capture when done")
     p.set_defaults(func=cmd_capture)
+
+    # sniff - passively reverse-engineer another flasher's session
+    p = sub.add_parser(
+        "sniff",
+        help="passively sniff another tool's read/write (Tactrix on a split OBD2 bus) "
+             "and derive the profile + seed/key",
+    )
+    p.add_argument("--backend", default="j2534",
+                   help="interface to listen on (default: j2534/Tactrix; also "
+                        "socketcan:can0, tactrix, ...)")
+    p.add_argument("--device", default="",
+                   help="J2534 device name substring ('tactrix') or PassThru DLL path")
+    p.add_argument("--baudrate", type=int, default=500000,
+                   help="CAN bit rate of the bus you are sniffing (default 500000)")
+    p.add_argument("--extended", action="store_true",
+                   help="the sniffed bus uses 29-bit CAN ids")
+    p.add_argument("--simulator", action="store_true",
+                   help="sniff an in-process simulated flash instead (for testing)")
+    p.add_argument("--profile",
+                   help="ECU profile for the request/response id hints "
+                        "(defaults to built-in MED17.7.5)")
+    p.add_argument("--tx", type=lambda x: int(x, 0), default=None,
+                   help="request CAN id for the final analysis (default from profile)")
+    p.add_argument("--rx", type=lambda x: int(x, 0), default=None,
+                   help="response CAN id for the final analysis (default from profile)")
+    p.add_argument("-o", "--output", default="sniff.log",
+                   help="write the raw capture as a candump log (default sniff.log)")
+    p.add_argument("--seconds", type=float, default=None,
+                   help="stop after N seconds (default: until Ctrl+C)")
+    p.add_argument("--emit-profile",
+                   help="where to write the derived profile "
+                        "(default: <output>.profile.yaml)")
+    p.add_argument("--emit-pairs",
+                   help="where to write extracted seed/key pairs "
+                        "(default: <output>.pairs.txt)")
+    p.add_argument("--no-analyze", action="store_true",
+                   help="just record the log; skip the automatic analysis")
+    p.set_defaults(func=cmd_sniff)
 
     # seedkey
     p = sub.add_parser("seedkey", help="compute a key from a seed")

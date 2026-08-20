@@ -77,6 +77,13 @@ def test_iss_source_files_exist():
         resolved, rel = _resolve(raw)
         if any(rel.startswith(p) for p in BUILD_OUTPUTS):
             continue  # produced by PyInstaller during the build
+        if any(ch in os.path.basename(resolved) for ch in "*?"):
+            # A wildcard Source (e.g. the drivers\* payload): its parent
+            # directory must exist so the compiler has something to scan.
+            assert os.path.isdir(os.path.dirname(resolved)), (
+                "%r -> %r: parent directory does not exist" % (raw, resolved)
+            )
+            continue
         assert os.path.exists(resolved), (
             "%r -> %r does not exist" % (raw, resolved)
         )
@@ -166,3 +173,17 @@ def test_frozen_app_cli_reports_failures_as_exit_codes():
 
     # No PassThru device here, so this must fail cleanly rather than raise.
     assert _run(["j2534"]) == 1
+
+
+def test_iss_has_tactrix_driver_autoinstall():
+    """The installer must carry the bundled-driver auto-install hook so a
+    Tactrix works right after setup (packaging/drivers/ -> silent install)."""
+    text = _iss_text()
+    assert "RunBundledDrivers" in text
+    assert "installdriver" in text
+    assert "HaveDriver" in text          # compile-time presence gate
+    assert "ssPostInstall" in text       # runs after the app files land
+    # the drop-in folder and its operator instructions must exist
+    drivers = os.path.join(PACKAGING, "drivers")
+    assert os.path.isdir(drivers)
+    assert os.path.isfile(os.path.join(drivers, "README.txt"))

@@ -459,3 +459,228 @@ class LiveCapture:
     @property
     def frames(self) -> List[TraceFrame]:
         return list(self._frames)
+
+
+# --------------------------------------------------------------------------- #
+# Live UDS decode (for `med17flasher sniff`)
+# --------------------------------------------------------------------------- #
+@dataclass
+class FlowEvent:
+    """One decoded, human-readable step observed live while sniffing.
+
+    ``kind`` is a stable machine tag (``session``, ``seed``, ``key``,
+    ``seedkey``, ``download``, ``transfer``, ``erase``, ``checkmemory``,
+    ``routine``, ``exit``, ``reset``, ``did``, ``nrc``); ``text`` is ready to
+    print; ``detail`` carries the parsed fields for a UI.
+    """
+
+    timestamp: float
+    kind: str
+    text: str
+    detail: Dict = field(default_factory=dict)
+
+
+class _DirAssembler:
+    """Incremental ISO-TP reassembly for a single CAN id (flow control ignored).
+
+    Fed one CAN payload at a time, it returns a completed UDS message the moment
+    the last segment arrives and ``None`` otherwise - the streaming counterpart
+    of :func:`reassemble`, which works over a whole frame list at once.
+    """
+
+    __slots__ = ("_buf", "_expected")
+
+    def __init__(self) -> None:
+        self._buf: Optional[bytearray] = None
+        self._expected = 0
+
+    def feed(self, data: bytes) -> Optional[bytes]:
+        if not data:
+            return None
+        pci = data[0] >> 4
+        if pci == 0x0:  # Single Frame
+            length = data[0] & 0x0F
+            if length == 0 and len(data) > 8:  # ISO-TP 2016 escape
+                length = data[1]
+                out = bytes(data[2 : 2 + length])
+            else:
+                out = bytes(data[1 : 1 + length])
+            self._buf = None
+            return out
+        if pci == 0x1:  # First Frame
+            length = ((data[0] & 0x0F) << 8) | data[1]
+            if length == 0:  # 32-bit escape length
+                length = int.from_bytes(data[2:6], "big")
+                self._buf = bytearray(data[6:])
+            else:
+                self._buf = bytearray(data[2:])
+            self._expected = length
+            if len(self._buf) >= self._expected:
+                out = bytes(self._buf[: self._expected])
+                self._buf = None
+                return out
+            return None
+        if pci == 0x2:  # Consecutive Frame
+            if self._buf is None:
+                return None
+            self._buf.extend(data[1:])
+            if len(self._buf) >= self._expected:
+                out = bytes(self._buf[: self._expected])
+                self._buf = None
+                return out
+            return None
+        return None  # Flow Control - nothing to reassemble
+
+
+_SESSION_NAMES = {0x01: "Standard", 0x02: "Programmierung", 0x03: "Erweitert",
+                  0x04: "Sicherheitssystem"}
+_RESET_NAMES = {0x01: "Hard-Reset", 0x02: "Key-Off/On", 0x03: "Soft-Reset"}
+_NRC_NAMES = {
+    0x10: "generalReject", 0x11: "serviceNotSupported",
+    0x22: "conditionsNotCorrect", 0x24: "requestSequenceError",
+    0x31: "requestOutOfRange", 0x33: "securityAccessDenied",
+    0x35: "invalidKey", 0x36: "exceedNumberOfAttempts",
+    0x72: "programmingFailure", 0x73: "wrongBlockSequenceCounter",
+}
+
+
+class LiveUdsTracker:
+    """Turn a live stream of raw CAN frames into high-level UDS steps.
+
+    Feed it every frame seen on the bus - both the tester's requests and the
+    ECU's responses, no matter which CAN ids they use - and it emits
+    :class:`FlowEvent` objects: session changes, the seed and key of each
+    Security Access (paired automatically), each RequestDownload
+    address/size, transfer progress, the erase / checkMemory routines and
+    ECUReset. It keeps one ISO-TP assembler per CAN id, so it does not need to
+    be told the request/response ids in advance - ideal for sniffing another
+    tool whose addressing you may not know yet.
+
+    This is for *live confidence*, not the system of record: it decodes the
+    head of the flow as it happens. The authoritative memory map and seed/key
+    pairs still come from :func:`analyze` over the full recording afterwards.
+    """
+
+    def __init__(self, *, transfer_every: int = 64) -> None:
+        self._asm: Dict[int, _DirAssembler] = {}
+        self._pending_seed: Dict[int, bytes] = {}
+        self._transfers = 0
+        self._transfer_every = max(1, int(transfer_every))
+        self._dids_seen: set = set()
+        self.frame_count = 0
+
+    def feed(self, frame: TraceFrame) -> List[FlowEvent]:
+        self.frame_count += 1
+        asm = self._asm.get(frame.arbitration_id)
+        if asm is None:
+            asm = self._asm[frame.arbitration_id] = _DirAssembler()
+        msg = asm.feed(frame.data)
+        if not msg:
+            return []
+        return self._classify(frame.timestamp, msg)
+
+    def _classify(self, ts: float, msg: bytes) -> List[FlowEvent]:
+        sid = msg[0]
+        ev: List[FlowEvent] = []
+
+        if sid == C.Service.DIAGNOSTIC_SESSION_CONTROL and len(msg) > 1:
+            sub = msg[1] & 0x7F
+            name = _SESSION_NAMES.get(sub, f"0x{sub:02X}")
+            ev.append(FlowEvent(ts, "session", f"Sitzung -> {name} (0x{sub:02X})",
+                                {"session": sub}))
+
+        elif sid == 0x67 and len(msg) > 2:  # SecurityAccess: positive seed
+            level = msg[1]
+            seed = bytes(msg[2:])
+            self._pending_seed[level] = seed
+            ev.append(FlowEvent(ts, "seed",
+                                f"Security Access L0x{level:02X}: Seed = {seed.hex()}",
+                                {"level": level, "seed": seed.hex()}))
+
+        elif sid == C.Service.SECURITY_ACCESS and len(msg) > 2 and (msg[1] % 2 == 0):
+            level = msg[1]  # even = sendKey
+            key = bytes(msg[2:])
+            seed = self._pending_seed.get(level - 1)
+            ev.append(FlowEvent(ts, "key",
+                                f"Security Access L0x{level - 1:02X}: Key  = {key.hex()}",
+                                {"level": level - 1, "key": key.hex()}))
+            if seed is not None:
+                ev.append(FlowEvent(ts, "seedkey",
+                                    f"  -> Seed/Key-Paar L0x{level - 1:02X}: "
+                                    f"{seed.hex()} / {key.hex()}",
+                                    {"level": level - 1, "seed": seed.hex(),
+                                     "key": key.hex()}))
+
+        elif sid == C.Service.REQUEST_DOWNLOAD and len(msg) >= 4:
+            alfid = msg[2]
+            addr_len = alfid & 0x0F
+            size_len = (alfid >> 4) & 0x0F
+            addr = int.from_bytes(msg[3 : 3 + addr_len], "big")
+            size = int.from_bytes(msg[3 + addr_len : 3 + addr_len + size_len], "big")
+            self._transfers = 0
+            ev.append(FlowEvent(ts, "download",
+                                f"RequestDownload -> 0x{addr:08X}  {size} Bytes "
+                                f"(0x{size:X})",
+                                {"address": addr, "size": size}))
+
+        elif sid == C.Service.REQUEST_UPLOAD and len(msg) >= 4:
+            alfid = msg[2]
+            addr_len = alfid & 0x0F
+            size_len = (alfid >> 4) & 0x0F
+            addr = int.from_bytes(msg[3 : 3 + addr_len], "big")
+            size = int.from_bytes(msg[3 + addr_len : 3 + addr_len + size_len], "big")
+            self._transfers = 0
+            ev.append(FlowEvent(ts, "upload",
+                                f"RequestUpload (lesen) <- 0x{addr:08X}  {size} Bytes",
+                                {"address": addr, "size": size}))
+
+        elif sid == C.Service.TRANSFER_DATA:
+            self._transfers += 1
+            if self._transfers % self._transfer_every == 0:
+                ev.append(FlowEvent(ts, "transfer",
+                                    f"  TransferData: {self._transfers} Bloecke ...",
+                                    {"transfers": self._transfers}))
+
+        elif sid == C.Service.REQUEST_TRANSFER_EXIT:
+            ev.append(FlowEvent(ts, "exit",
+                                f"RequestTransferExit ({self._transfers} Bloecke)",
+                                {"transfers": self._transfers}))
+
+        elif sid == C.Service.ROUTINE_CONTROL and len(msg) >= 4:
+            rid = (msg[2] << 8) | msg[3]
+            args = msg[4:]
+            parsed = _looks_like_alfid_addr_size(args)
+            if parsed and len(args) >= 1 + (args[0] & 0x0F) + ((args[0] >> 4) & 0x0F) + 4:
+                ev.append(FlowEvent(ts, "checkmemory",
+                                    f"RoutineControl checkMemory (0x{rid:04X})",
+                                    {"routine": rid}))
+            elif parsed:
+                addr, size = parsed
+                ev.append(FlowEvent(ts, "erase",
+                                    f"RoutineControl eraseMemory (0x{rid:04X}) "
+                                    f"0x{addr:08X}  {size} Bytes",
+                                    {"routine": rid, "address": addr, "size": size}))
+            else:
+                ev.append(FlowEvent(ts, "routine",
+                                    f"RoutineControl 0x{rid:04X}", {"routine": rid}))
+
+        elif sid == C.Service.ECU_RESET and len(msg) > 1:
+            name = _RESET_NAMES.get(msg[1], f"0x{msg[1]:02X}")
+            ev.append(FlowEvent(ts, "reset", f"ECUReset ({name})", {"reset": msg[1]}))
+
+        elif sid == C.Service.READ_DATA_BY_IDENTIFIER and len(msg) >= 3:
+            did = (msg[1] << 8) | msg[2]
+            if did not in self._dids_seen:
+                self._dids_seen.add(did)
+                ev.append(FlowEvent(ts, "did", f"ReadDataByIdentifier 0x{did:04X}",
+                                    {"did": did}))
+
+        elif sid == C.NEGATIVE_RESPONSE_SID and len(msg) >= 3:
+            nrc = msg[2]
+            if nrc != 0x78:  # responsePending is normal churn - stay quiet
+                name = _NRC_NAMES.get(nrc, f"0x{nrc:02X}")
+                ev.append(FlowEvent(ts, "nrc",
+                                    f"NegativeResponse SID 0x{msg[1]:02X}: {name}",
+                                    {"sid": msg[1], "nrc": nrc}))
+
+        return ev
