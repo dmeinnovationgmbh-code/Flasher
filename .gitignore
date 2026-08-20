@@ -20,3 +20,6 @@ firmware-repo/
 .idea/
 .vscode/
 .DS_Store
+
+# Design scratch (canvas-design deliverables; sent to the user, not product source)
+.design/
