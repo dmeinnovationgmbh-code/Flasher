@@ -446,6 +446,7 @@ function ExpertSection({ running }) {
   const [repoList, setRepoList] = useState(null)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState(null)
+  const [pre, setPre] = useState(null)
 
   useEffect(() => {
     api.getProfiles().then((d) => {
@@ -460,7 +461,7 @@ function ExpertSection({ running }) {
     api.getExpert().then((c) => { if (c.firmware) setFw(c.firmware) }).catch(() => {})
   }, [])
 
-  const upd = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+  const upd = (k, v) => { setPre(null); setForm((f) => ({ ...f, [k]: v })) }
   const backendObj = backends.find((b) => b.id === form.backend)
   const isReal = backendObj ? backendObj.real : false
 
@@ -518,6 +519,23 @@ function ExpertSection({ running }) {
     return { source: 'profile' }
   }
 
+  const onPreflight = async () => {
+    setBusy(true); setMsg(null); setPre(null)
+    try {
+      await api.setExpertConfig({
+        profileId: form.profileId, backend: form.backend,
+        seedkey: seedCfg(), allowWrite: form.allowWrite,
+      })
+      const r = await api.preflightExpert()
+      setPre(r)
+      setMsg({ ok: r.ok, t: r.ok
+        ? `Probelauf bestanden · ${r.summary} · nichts geschrieben`
+        : `Probelauf fehlgeschlagen · ${r.summary} · NICHT flashen` })
+    } catch (err) {
+      setMsg({ ok: false, t: `Probelauf-Fehler: ${String(err.message || err)}` })
+    } finally { setBusy(false) }
+  }
+
   const onFlash = async () => {
     setBusy(true); setMsg(null)
     try {
@@ -535,7 +553,10 @@ function ExpertSection({ running }) {
     }
   }
 
-  const canFlash = form.profileId && fw && !running && !busy && (!isReal || form.allowWrite)
+  const preOk = pre && pre.ok
+  const canPreflight = form.profileId && fw && !running && !busy
+  // A real write additionally requires a passed rehearsal for THIS config.
+  const canFlash = canPreflight && (!isReal || (form.allowWrite && preOk))
   const seedNeedsUrl = form.seedSource === 'server'
   const seedNeedsPath = ['dll', 'bridge', 'exe', 'store'].includes(form.seedSource)
 
@@ -660,11 +681,36 @@ function ExpertSection({ running }) {
           </label>
         )}
 
+        {pre && (
+          <div style={{ border: `1px solid ${pre.ok ? 'rgba(52,199,89,.4)' : 'rgba(215,0,21,.4)'}`, borderRadius: 10, padding: '10px 12px', background: pre.ok ? 'rgba(52,199,89,.06)' : 'rgba(215,0,21,.05)' }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6, color: pre.ok ? GREEN : '#D70015' }}>
+              Probelauf {pre.ok ? 'bestanden' : 'fehlgeschlagen'} · {pre.summary}{pre.simulator ? ' · Simulator' : ''}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {pre.checks.map((c, i) => (
+                <div key={i} style={{ fontSize: 11.5, fontFamily: MONO, color: c.ok ? MUTED : (c.fatal ? '#D70015' : '#8A4B00') }}>
+                  {c.ok ? '✓' : (c.fatal ? '✕' : '!')} {c.name}{c.detail ? ` — ${c.detail}` : ''}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {msg && (
           <div style={{ fontSize: 12, color: msg.ok ? GREEN : '#D70015' }}>{msg.t}</div>
         )}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {isReal && !preOk && (
+          <div style={{ fontSize: 11.5, color: FAINT }}>
+            Vor dem echten Schreiben ist ein bestandener Probelauf erforderlich.
+          </div>
+        )}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <button onClick={onPreflight} disabled={!canPreflight}
+            style={{ padding: '10px 18px', borderRadius: 9, fontSize: 14, fontWeight: 600, border: '1px solid rgba(0,0,0,.15)', background: canPreflight ? '#fff' : 'rgba(0,0,0,.05)', color: canPreflight ? '#111' : FAINT }}>
+            Probelauf (nichts schreiben)
+          </button>
           <button onClick={onFlash} disabled={!canFlash}
             style={{ padding: '10px 22px', borderRadius: 9, fontSize: 14, fontWeight: 700, color: '#fff', background: canFlash ? ACCENT : 'rgba(0,0,0,.15)', boxShadow: canFlash ? '0 4px 12px -4px rgba(255,122,0,.5)' : 'none' }}>
             {isReal ? 'Echt flashen' : 'Im Simulator flashen'}

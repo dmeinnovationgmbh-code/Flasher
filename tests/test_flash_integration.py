@@ -11,6 +11,8 @@ from med17flasher.core.flash_sequence import Flasher, ProfileSeedKey, Stage
 from med17flasher.exceptions import FlashAborted, FlashError
 from med17flasher.simulator import VirtualEcuConfig
 
+from .conftest import SECURITY_PARAMS
+
 
 def _make_image(profile):
     img = FirmwareImage()
@@ -130,5 +132,110 @@ def test_response_pending_during_flash(network, demo_profile):
         img = _make_image(demo_profile)
         flasher = Flasher(uds, demo_profile, ProfileSeedKey(demo_profile))
         assert flasher.flash(img).success
+    finally:
+        sim.stop()
+
+
+# --------------------------------------------------------------------------- #
+# Preflight: rehearse everything up to the point of no return, write nothing
+# --------------------------------------------------------------------------- #
+def test_preflight_passes_and_writes_nothing(uds, simulator, demo_profile):
+    """The rehearsal must exercise the risky parts without touching flash."""
+
+    img = _make_image(demo_profile)
+    before = simulator.read_memory(0x80040000, 0x2000)
+
+    flasher = Flasher(uds, demo_profile, ProfileSeedKey(demo_profile))
+    report = flasher.preflight(img)
+
+    assert report.ok, report.summary()
+    assert report.blocks == ["ASW", "CAL"]
+    assert report.identification            # DIDs were read
+    names = [c.name for c in report.checks]
+    assert "security access granted" in names
+    assert "programming session entered" in names
+
+    # Nothing erased, nothing written - that is the whole point.
+    assert simulator.erased_regions == []
+    assert simulator.read_memory(0x80040000, 0x2000) == before
+
+
+def test_preflight_catches_a_wrong_key_before_anything_is_erased(demo_profile):
+    """The failure mode that matters: a bad key found *before* the erase."""
+
+    from med17flasher.core import (
+        IsoTpConfig,
+        IsoTpLayer,
+        UdsClient,
+        UdsTiming,
+        VirtualCanNetwork,
+    )
+    from med17flasher.simulator import VirtualEcu, VirtualEcuConfig
+
+    net = VirtualCanNetwork()
+    sim = VirtualEcu(net.new_endpoint("ecu"), demo_profile, VirtualEcuConfig(
+        security_algorithm="xor", security_params={"mask": 0xA5A5A5A5}))
+    sim.start()
+    try:
+        tp = IsoTpLayer(net.new_endpoint("tester"), IsoTpConfig(
+            tx_id=demo_profile.can.tx_id, rx_id=demo_profile.can.rx_id,
+            padding_byte=demo_profile.can.padding_byte))
+        uds = UdsClient(tp, UdsTiming(p2=1.0, p2_star=2.0))
+        # The profile's own (different) algorithm -> the key will be rejected.
+        flasher = Flasher(uds, demo_profile, ProfileSeedKey(demo_profile))
+        report = flasher.preflight(_make_image(demo_profile))
+
+        assert not report.ok
+        assert any(not c.ok and c.fatal for c in report.checks)
+        assert sim.erased_regions == []     # the ECU is untouched
+    finally:
+        sim.stop()
+
+
+def test_preflight_rejects_a_wrong_file_type_via_byte_markers(demo_profile):
+    """Profiles document markers like 'CAL starts 0x60, ends 0xDE'.
+
+    Nothing enforced them, so the wrong file could be written. Now it blocks -
+    and it blocks on the static check, before the ECU is even unlocked.
+    """
+
+    from dataclasses import replace
+
+    from med17flasher.core import (
+        IsoTpConfig,
+        IsoTpLayer,
+        UdsClient,
+        UdsTiming,
+        VirtualCanNetwork,
+    )
+    from med17flasher.core.firmware import FirmwareImage
+    from med17flasher.simulator import VirtualEcu, VirtualEcuConfig
+
+    # One region that must start 0x60 / end 0xDE.
+    region = replace(demo_profile.memory_map[1], start=0x80040000, size=0x1000,
+                     expect_first_byte="60", expect_last_byte="de")
+    profile = replace(demo_profile, memory_map=[region])
+
+    img = FirmwareImage()
+    img.add_segment(0x80040000, bytes([0x11]) + bytes(0xFFE) + bytes([0x22]))
+    img = img.normalise()
+
+    net = VirtualCanNetwork()
+    sim = VirtualEcu(net.new_endpoint("ecu"), profile, VirtualEcuConfig(
+        security_algorithm="med17", security_params=SECURITY_PARAMS))
+    sim.start()
+    try:
+        tp = IsoTpLayer(net.new_endpoint("tester"), IsoTpConfig(
+            tx_id=profile.can.tx_id, rx_id=profile.can.rx_id,
+            padding_byte=profile.can.padding_byte))
+        uds = UdsClient(tp, UdsTiming(p2=1.0, p2_star=2.0))
+        flasher = Flasher(uds, profile, ProfileSeedKey(profile))
+        report = flasher.preflight(img)
+
+        assert not report.ok
+        bad = [c for c in report.checks if not c.ok and c.fatal]
+        assert any("first byte" in c.name for c in bad)
+        assert any("last byte" in c.name for c in bad)
+        assert sim.erased_regions == []
     finally:
         sim.stop()

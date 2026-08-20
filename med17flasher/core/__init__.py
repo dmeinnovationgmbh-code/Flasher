@@ -40,6 +40,8 @@ from .flash_sequence import (
     FlashProgress,
     FlashResult,
     Flasher,
+    PreflightCheck,
+    PreflightReport,
     ProfileSeedKey,
     Stage,
 )
@@ -84,4 +86,6 @@ __all__ = [
     "FlashResult",
     "ProfileSeedKey",
     "Stage",
+    "PreflightCheck",
+    "PreflightReport",
 ]

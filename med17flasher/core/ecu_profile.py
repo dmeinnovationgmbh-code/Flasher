@@ -40,6 +40,12 @@ class MemoryRegion:
     #: at this absolute address before download (checksum correction).
     checksum_patch_address: Optional[int] = None
     checksum_patch_size: int = 4
+    #: Expected first/last byte of the data written to this region, as hex
+    #: ("60" / "de"). Profiles document these markers - e.g. a med1775
+    #: calibration must start 0x60 and end 0xDE - but nothing enforced them,
+    #: so the wrong file type could be written. Checked by ``Flasher.preflight``.
+    expect_first_byte: Optional[str] = None
+    expect_last_byte: Optional[str] = None
 
     @property
     def end(self) -> int:

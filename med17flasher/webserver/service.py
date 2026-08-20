@@ -697,6 +697,46 @@ class FlashService:
         base = profile.memory_map[0].start if profile.memory_map else 0
         return _parse_firmware_bytes(u["name"], u["raw"], base_address=base)
 
+    def preflight_expert(self) -> dict:
+        """Rehearse the configured flash without writing - the safe dry run.
+
+        Opens the bus, checks the firmware against the profile, enters the
+        programming session and completes Security Access, then stops. Nothing
+        is erased. Returns a JSON-able report the UI shows before enabling the
+        real write.
+        """
+
+        prof = self._expert_profile
+        if prof is None:
+            raise ValueError("kein Profil gewählt")
+        if not self._uploaded:
+            raise ValueError("keine Firmware geladen")
+
+        backend = self._expert_backend
+        is_sim = backend == "simulator"
+        resolver = self._build_resolver(prof, self._expert_seedkey)
+        image = self._build_uploaded_image(prof)
+
+        uds, close = self._open_session(prof, backend, is_sim)
+        try:
+            flasher = Flasher(uds, prof, resolver)
+            report = flasher.preflight(image)
+        finally:
+            try:
+                close()
+            except Exception:  # noqa: BLE001
+                pass
+
+        return {
+            "ok": report.ok,
+            "summary": report.summary(),
+            "durationMs": int(report.duration * 1000),
+            "blocks": report.blocks,
+            "checks": [{"name": c.name, "ok": c.ok, "detail": c.detail,
+                        "fatal": c.fatal} for c in report.checks],
+            "simulator": is_sim,
+        }
+
     def start_expert_flash(self) -> bool:
         """Start a real flash using the configured profile/backend/firmware."""
 

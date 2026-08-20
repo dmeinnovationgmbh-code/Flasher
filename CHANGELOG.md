@@ -7,6 +7,21 @@ uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Preflight / dry run — rehearse a flash without writing anything.** Everything
+  up to the point of no return runs for real: the bus opens, the ECU answers,
+  the firmware is checked against the profile (including documented first/last
+  byte markers, e.g. a med1775 calibration must start 0x60 and end 0xDE), the
+  programming session is entered and Security Access actually completes — then
+  it stops, having erased nothing. This turns "the profile and seed/key are
+  probably right" into a verified fact at zero risk: a key that would fail after
+  the erase (bricking the ECU) fails here instead, on an untouched ECU.
+  - In the app: a **"Probelauf (nichts schreiben)"** button; a real hardware
+    write is now blocked until a rehearsal for that exact config has passed.
+  - In the CLI / shipped .exe: `flash --dry-run` now runs the live rehearsal
+    (add `--no-unlock` to skip Security Access) and exits non-zero with
+    "DO NOT FLASH" if a blocking check fails.
+  - `MemoryRegion` gained `expect_first_byte` / `expect_last_byte`; `Flasher`
+    gained `preflight()` returning a `PreflightReport`.
 - **J2534 PassThru CAN backend** — support for the interfaces professional
   flashing actually uses (**Tactrix Openport 2.0**, Mongoose, VCX, …). Until now
   the only real transports were SocketCAN and whatever `python-can` covers, and

@@ -23,7 +23,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, List, Optional, Protocol
+from typing import Callable, Dict, List, Optional, Protocol
 
 from ..exceptions import FlashAborted, FlashError, Med17FlasherError
 from ..logging_setup import get_logger
@@ -105,6 +105,44 @@ class FlashResult:
     message: str = ""
 
 
+@dataclass
+class PreflightCheck:
+    """One verdict from :meth:`Flasher.preflight`."""
+
+    name: str
+    ok: bool
+    detail: str = ""
+    fatal: bool = False       # a failure here means "do not write"
+
+
+@dataclass
+class PreflightReport:
+    """The outcome of a read-only rehearsal of a flash."""
+
+    checks: List[PreflightCheck] = field(default_factory=list)
+    identification: Dict[int, bytes] = field(default_factory=dict)
+    blocks: List[str] = field(default_factory=list)
+    duration: float = 0.0
+
+    @property
+    def ok(self) -> bool:
+        """True when nothing fatal failed - i.e. writing may be attempted."""
+
+        return not any(c.fatal and not c.ok for c in self.checks)
+
+    @property
+    def failures(self) -> List["PreflightCheck"]:
+        return [c for c in self.checks if not c.ok]
+
+    def summary(self) -> str:
+        bad = self.failures
+        if not bad:
+            return f"all {len(self.checks)} checks passed"
+        blocking = [c for c in bad if c.fatal]
+        head = f"{len(bad)} of {len(self.checks)} checks failed"
+        return head + (f" ({len(blocking)} blocking)" if blocking else " (none blocking)")
+
+
 class Flasher:
     """Reprogram a MED17.7.5 following its ECU profile."""
 
@@ -144,6 +182,99 @@ class Flasher:
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
+    def preflight(self, image: FirmwareImage, *,
+                  unlock: bool = True) -> PreflightReport:
+        """Rehearse a flash **without writing anything**.
+
+        Everything up to the point of no return is exercised for real: the bus
+        opens, the ECU answers, the image is checked against the profile, the
+        programming session is entered and - unless ``unlock=False`` - Security
+        Access actually completes. Nothing is erased and nothing is downloaded.
+
+        This is what turns "the profile and the seed/key are probably right"
+        into a fact, at zero risk: an unlock that fails here would have failed
+        after the erase, with the ECU already empty.
+        """
+
+        start = time.monotonic()
+        report = PreflightReport()
+
+        def check(name: str, ok: bool, detail: str = "", fatal: bool = False) -> None:
+            report.checks.append(PreflightCheck(name, ok, detail, fatal))
+            self._report(FlashProgress(
+                Stage.PRECONDITION,
+                message=f"{'OK ' if ok else 'FAIL'} {name}" + (f": {detail}" if detail else ""),
+            ))
+
+        # --- static: the image against the profile (no bus traffic) --------- #
+        blocks = image.blocks_for(self.profile.memory_map)
+        report.blocks = [b.name for b in blocks]
+        check("firmware matches the memory map",
+              bool(blocks),
+              ", ".join(f"{b.name} @0x{b.address:08X} {b.size} B" for b in blocks)
+              or "the image overlaps no region - wrong base address or profile?",
+              fatal=True)
+
+        for block in blocks:
+            region = self._region_for(block)
+            if region is None:
+                continue
+            covered = len(block.data)
+            check(f"{block.name}: fills its region",
+                  covered == region.size,
+                  f"{covered} of {region.size} bytes"
+                  + ("" if covered == region.size
+                     else " - the rest is padding and would be written too"))
+            for label, expect, actual in (
+                ("first", region.expect_first_byte, block.data[:1]),
+                ("last", region.expect_last_byte, block.data[-1:]),
+            ):
+                if not expect:
+                    continue
+                want = bytes.fromhex(expect)
+                check(f"{block.name}: {label} byte is 0x{want.hex().upper()}",
+                      actual == want,
+                      f"found 0x{actual.hex().upper() or '--'}"
+                      + ("" if actual == want else " - wrong file type for this region?"),
+                      fatal=True)
+
+        # --- live: the ECU, the session and the key ------------------------- #
+        try:
+            self._pre_reset()
+            self._gateway_unlock()
+            self.uds.start_tester_present(self.profile.timing.tester_present_period)
+            self._connect()
+            check("ECU answers in the extended session", True)
+
+            try:
+                report.identification = dict(self.identify())
+                check("identification readable", bool(report.identification),
+                      f"{len(report.identification)} DIDs")
+            except Med17FlasherError as exc:
+                check("identification readable", False, str(exc))
+
+            self._preconditions()
+            self._enter_programming_session()
+            check("programming session entered", True)
+
+            if unlock:
+                self._security_access()
+                check("security access granted", True,
+                      "the seed/key source is correct for this ECU", fatal=True)
+            else:
+                check("security access", True, "skipped on request")
+        except Med17FlasherError as exc:
+            # Which step failed is already in the log; record it as blocking.
+            check("live rehearsal", False, str(exc), fatal=True)
+        finally:
+            self._safe_return_to_default()
+
+        report.duration = time.monotonic() - start
+        self._report(FlashProgress(
+            Stage.DONE if report.ok else Stage.FAILED,
+            message=f"preflight: {report.summary()}"))
+        return report
+
     def flash(self, image: FirmwareImage) -> FlashResult:
         """Run the complete flashing sequence for ``image``."""
 

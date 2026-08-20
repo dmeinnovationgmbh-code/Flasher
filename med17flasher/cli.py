@@ -195,10 +195,18 @@ def cmd_flash(args) -> int:
                 print(f"  (identify skipped: {exc})")
 
         if args.dry_run:
-            print("Dry run: not writing (planned blocks below)")
-            for block in image.blocks_for(profile.memory_map):
-                print(f"  - {block.name}: 0x{block.address:08X} ({block.size} bytes)")
-            return 0
+            # A real rehearsal: check the file against the profile, open the
+            # session and (unless --no-unlock) complete Security Access - then
+            # stop, having written nothing. This is what proves the profile and
+            # the seed/key are right *before* the erase.
+            report = flasher.preflight(image, unlock=not args.no_unlock)
+            print(f"\nPreflight: {report.summary()} ({report.duration:.1f}s)")
+            for c in report.checks:
+                mark = "[x]" if c.ok else ("[!]" if not c.fatal else "[X]")
+                print(f"  {mark} {c.name}" + (f" - {c.detail}" if c.detail else ""))
+            if not report.ok:
+                print("\nDO NOT FLASH: a blocking check failed.", file=sys.stderr)
+            return 0 if report.ok else 1
 
         result = flasher.flash(image)
         print(f"\nSUCCESS: flashed {', '.join(result.blocks)} in {result.duration:.1f}s")
@@ -1251,7 +1259,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seedkey-options", default="", help="option string for the seed-key DLL")
     p.add_argument("--plugin", help="seed/key algorithm plug-in .py to load")
     p.add_argument("--no-identify", action="store_true", help="skip reading identification DIDs")
-    p.add_argument("--dry-run", action="store_true", help="plan the flash but do not write")
+    p.add_argument("--dry-run", action="store_true",
+                   help="rehearse the flash (check file, open session, unlock) but write nothing")
+    p.add_argument("--no-unlock", action="store_true",
+                   help="with --dry-run, skip Security Access (no seed/key needed)")
     p.set_defaults(func=cmd_flash)
 
     # identify

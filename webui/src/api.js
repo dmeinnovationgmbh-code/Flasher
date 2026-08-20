@@ -79,6 +79,8 @@ export const setRepo = (cfg) =>
   }).then(json)
 export const listRepo = (q) =>
   fetch('/api/repo/list' + (q ? `?q=${encodeURIComponent(q)}` : '')).then(json)
+export const preflightExpert = () =>
+  fetch('/api/expert/preflight', { method: 'POST' }).then(json)
 export const useRepoFirmware = (id) =>
   fetch('/api/repo/use', {
     method: 'POST',

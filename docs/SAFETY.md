@@ -30,8 +30,13 @@ store. Do **not** assume the defaults match your ECU.
   over the boot sector unless you know exactly what you are doing.
 * **Right image for the right ECU.** Match hardware/software part numbers
   (read them with `med17flasher identify`).
-* **Dry run.** `med17flasher flash --dry-run` prints the planned blocks without
-  writing anything.
+* **Dry run (rehearsal).** `med17flasher flash --dry-run` — or the app's
+  **Probelauf** button — opens the bus, checks the file against the profile,
+  enters the programming session and completes **Security Access**, then stops
+  without erasing anything. A seed/key that would fail *after* the erase (and
+  brick the ECU) fails here instead, on an untouched ECU. Add `--no-unlock` to
+  rehearse without a seed/key. In the app a real write is blocked until a
+  rehearsal for that exact configuration has passed.
 * **Recovery plan.** Know how to enter boot/BSL mode and reflash if a UDS flash
   is interrupted.
 

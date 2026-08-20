@@ -236,6 +236,13 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(404, {"error": f"unbekanntes Profil: {exc}"})
             except Exception as exc:  # noqa: BLE001
                 self._json(400, {"error": str(exc)})
+        elif path == "/api/expert/preflight":
+            try:
+                self._json(200, self._svc.preflight_expert())
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self._json(502, {"error": str(exc)})
         elif path == "/api/expert/flash":
             try:
                 started = self._svc.start_expert_flash()
