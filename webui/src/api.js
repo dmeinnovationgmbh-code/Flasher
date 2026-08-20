@@ -1,7 +1,12 @@
 // Thin client for the Python backend (med17flasher webserver).
 
 const json = async (res) => {
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+  if (!res.ok) {
+    // Surface the backend's own (German) error message, not just "400 Bad Request".
+    let msg = `${res.status} ${res.statusText}`
+    try { const b = await res.json(); if (b && b.error) msg = b.error } catch { /* not JSON */ }
+    throw new Error(msg)
+  }
   return res.json()
 }
 
