@@ -455,7 +455,7 @@ function MapsSection({ maps, addons, setAddons, buying, unlocked, onBuy, onFlash
 const fieldLabel = { fontSize: 12, fontWeight: 600, color: MUTED, marginBottom: 5, display: 'block' }
 const inputStyle = {
   width: '100%', padding: '9px 11px', borderRadius: 8, border: '1px solid rgba(0,0,0,.14)',
-  background: '#FFFFFF', fontSize: 13, color: '#1D1D1F', fontFamily: 'inherit',
+  backgroundColor: '#FFFFFF', fontSize: 13, color: '#1D1D1F', fontFamily: 'inherit',
 }
 
 function ExpertSection({ running }) {
@@ -473,6 +473,7 @@ function ExpertSection({ running }) {
   const [pre, setPre] = useState(null)
   const [backup, setBackup] = useState(null)
   const [backingUp, setBackingUp] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
 
   const reload = () => api.getProfiles().then((d) => {
     const ps = d.profiles || []
@@ -688,8 +689,24 @@ function ExpertSection({ running }) {
 
         <div>
           <label style={fieldLabel}>… oder Firmware-Datei vom Rechner</label>
-          <input type="file" accept=".bin,.hex,.s19,.srec,.mot" onChange={onUpload}
-            style={{ ...inputStyle, padding: '7px 10px' }} />
+          <label className={'filedrop' + (dragOver ? ' drag' : '')}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault(); setDragOver(false)
+              if (e.dataTransfer.files?.[0]) onUpload({ target: { files: e.dataTransfer.files } })
+            }}>
+            <input type="file" accept=".bin,.hex,.s19,.srec,.mot" onChange={onUpload} />
+            <span style={{ display: 'inline-flex', width: 34, height: 34, borderRadius: 8, background: 'rgba(255,122,0,.1)', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={ACCENT} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 15V4M7 9l5-5 5 5M5 20h14" />
+              </svg>
+            </span>
+            <span style={{ fontSize: 13, color: fw ? '#1D1D1F' : MUTED, lineHeight: 1.35 }}>
+              {fw ? fw.name : 'Datei wählen oder hierher ziehen'}
+              <span style={{ display: 'block', fontSize: 11.5, color: FAINT }}>.bin · .hex · .s19 · .srec · .mot</span>
+            </span>
+          </label>
           {fw && (
             <div style={{ marginTop: 6, fontFamily: MONO, fontSize: 11.5, color: GREEN }}>
               {fw.name} · {fw.programBytes} B · CRC32 {fw.crc32}
