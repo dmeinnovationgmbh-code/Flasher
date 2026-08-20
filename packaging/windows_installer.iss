@@ -24,6 +24,10 @@
 #define AppPublisher  "DME Innovation GmbH"
 #define AppGroup      "DME Innovation"
 #define AppExeName    "med17flasher-desktop.exe"
+; Official vendor download page for the Tactrix / J2534 driver. We point
+; customers here (Start-menu shortcut + a note in the app) so they install the
+; driver themselves; we do not redistribute it.
+#define TactrixURL    "https://www.tactrix.com/index.php?Itemid=61"
 #ifndef AppVersion
   #define AppVersion  "1.0.0"
 #endif
@@ -103,6 +107,9 @@ Source: "{#RepoRoot}\packaging\drivers\*"; DestDir: "{tmp}\drivers"; \
 [Icons]
 Name: "{group}\{#AppShortName}"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\icon.ico"
 Name: "{group}\{cm:UninstallProgram,{#AppShortName}}"; Filename: "{uninstallexe}"
+; Internet shortcut: Inno creates a .url when the Filename is a URL. Lets a
+; customer fetch the Tactrix / J2534 driver straight from the Start menu.
+Name: "{group}\Tactrix-Treiber (Download)"; Filename: "{#TactrixURL}"
 Name: "{autodesktop}\{#AppShortName}"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 
 [Run]

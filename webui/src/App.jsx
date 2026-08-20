@@ -9,6 +9,10 @@ const MUTED = '#6E6E73'
 const FAINT = '#AEAEB2'
 const MONO = "ui-monospace,'SF Mono','JetBrains Mono',monospace"
 
+// Where customers get the J2534 driver for a Tactrix Openport 2.0. We do not
+// bundle the driver; we point at the vendor's official download page.
+const TACTRIX_DRIVER_URL = 'https://www.tactrix.com/index.php?Itemid=61'
+
 const cardStyle = {
   background: '#FFFFFF',
   border: '1px solid rgba(0,0,0,.05)',
@@ -586,6 +590,16 @@ function ExpertSection({ running }) {
                 </option>
               ))}
             </select>
+            {!backends.some((b) => String(b.id).startsWith('j2534') && b.available) && (
+              <div style={{ fontSize: 11.5, color: MUTED, marginTop: 6, lineHeight: 1.4 }}>
+                Kein J2534-Gerät gefunden. Für einen Tactrix Openport 2.0 zuerst den
+                Treiber installieren:{' '}
+                <a href={TACTRIX_DRIVER_URL} target="_blank" rel="noreferrer"
+                  style={{ color: ACCENT, fontWeight: 600 }}>
+                  Tactrix-Treiber herunterladen
+                </a>
+              </div>
+            )}
           </div>
         </div>
 
