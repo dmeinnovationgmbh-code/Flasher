@@ -80,6 +80,18 @@ export const startSniff = (cfg) =>
 export const stopSniff = () =>
   fetch('/api/sniff/stop', { method: 'POST' }).then(json)
 export const sniffDownloadUrl = (kind) => `/api/sniff/download?kind=${kind}`
+export const importDerivedProfile = (source = 'sniff') =>
+  fetch('/api/profile/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source }),
+  }).then(json)
+
+/* ---- Full ECU backup (before writing) ----------------------------------- */
+export const runBackup = () =>
+  fetch('/api/backup', { method: 'POST' }).then((res) =>
+    res.ok ? res.json() : res.json().then((e) => Promise.reject(new Error(e.error || res.statusText))))
+export const backupDownloadUrl = () => '/api/backup/download'
 
 // --- Firmware repository (file server) ------------------------------------
 export const getRepo = () => fetch('/api/repo').then(json)

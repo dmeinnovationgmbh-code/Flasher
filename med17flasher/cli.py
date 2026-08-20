@@ -306,6 +306,104 @@ def cmd_read(args) -> int:
         bus.close()
 
 
+def cmd_backup(args) -> int:
+    """Read the ENTIRE ECU (every profile region) to one file before writing.
+
+    A full read is the first thing a careful tuner does: if a later write goes
+    wrong, this image is the way back. Reads every region in the profile's
+    memory map, concatenates them into one ``.bin`` and writes a manifest that
+    records each region's address, size, file offset and CRC32.
+    """
+
+    import zlib
+
+    profile = _load_profile_arg(args.profile)
+    if args.tx is not None:
+        profile.can.tx_id = args.tx
+    if args.rx is not None:
+        profile.can.rx_id = args.rx
+
+    regions = list(profile.memory_map)
+    if not regions:
+        print("profile has no memory_map regions to back up", file=sys.stderr)
+        return 2
+
+    bus, sim = _open_bus(args, profile)
+    uds = None
+    try:
+        uds = _build_uds(bus, profile)
+        uds.start_tester_present(profile.timing.tester_present_period)
+        try:
+            uds.enter_extended_session()
+        except Med17FlasherError:
+            pass
+        if not args.no_secure:
+            try:
+                resolver = _seedkey_resolver(args, profile)
+                seed = uds.request_seed(profile.security.request_seed_level)
+                if any(seed):
+                    key = resolver.compute(profile.name, profile.security.request_seed_level, seed)
+                    uds.send_key(profile.security.send_key_level, key)
+                    print(f"security access granted "
+                          f"(level 0x{profile.security.request_seed_level:02X})")
+            except Med17FlasherError as exc:
+                print(f"security access failed ({exc}); reading anyway ...", file=sys.stderr)
+
+        chunk = args.chunk
+        combined = bytearray()
+        manifest = []
+        for r in regions:
+            print(f"reading {r.name}: 0x{r.size:X} bytes @ 0x{r.start:08X} ...")
+            data = bytearray()
+            while len(data) < r.size:
+                n = min(chunk, r.size - len(data))
+                block = uds.read_memory_by_address(r.start + len(data), n)
+                if not block:
+                    print(f"\nECU returned no data at 0x{r.start + len(data):08X}",
+                          file=sys.stderr)
+                    return 1
+                data.extend(block)
+                pct = int(100 * len(data) / r.size)
+                sys.stdout.write(f"\r  {r.name}: {pct:3d}%")
+                sys.stdout.flush()
+            sys.stdout.write("\n")
+            crc = zlib.crc32(bytes(data[:r.size])) & 0xFFFFFFFF
+            manifest.append((r.name, r.start, r.size, len(combined), crc))
+            combined.extend(data[:r.size])
+
+        with open(args.output, "wb") as fh:
+            fh.write(bytes(combined))
+        total_crc = zlib.crc32(bytes(combined)) & 0xFFFFFFFF
+        man_path = os.path.splitext(args.output)[0] + ".manifest.txt"
+        with open(man_path, "w", encoding="utf-8") as fh:
+            fh.write(f"# full backup of {profile.name}\n")
+            fh.write(f"# {os.path.basename(args.output)}  {len(combined)} bytes  "
+                     f"crc32=0x{total_crc:08X}\n")
+            fh.write("# region\taddress\tsize\tfile_offset\tcrc32\n")
+            for name, start, size, off, crc in manifest:
+                fh.write(f"{name}\t0x{start:08X}\t{size}\t@{off}\tcrc32=0x{crc:08X}\n")
+
+        print(f"backup complete: {len(combined)} bytes ({len(manifest)} region(s)) "
+              f"-> {args.output}")
+        print(f"  total CRC32 0x{total_crc:08X}   manifest -> {man_path}")
+        return 0
+    except Med17FlasherError as exc:
+        print(f"\nbackup failed: {exc}", file=sys.stderr)
+        print("  note: a full read usually needs a programming/extended session and "
+              "Security Access (on by default; --no-secure to skip), or bench/boot mode.",
+              file=sys.stderr)
+        return 1
+    finally:
+        if uds is not None:
+            try:
+                uds.stop_tester_present()
+            except Exception:  # noqa: BLE001
+                pass
+        if sim:
+            sim.stop()
+        bus.close()
+
+
 def cmd_checksum(args) -> int:
     """Verify or correct MEDC17/EDC17 internal flash checksums."""
 
@@ -1479,6 +1577,30 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seedkey-options", default="", help="option string for the seed-key DLL")
     p.add_argument("-o", "--output", required=True)
     p.set_defaults(func=cmd_read)
+
+    # backup — read the whole ECU before writing
+    p = sub.add_parser("backup",
+                       help="read the ENTIRE ECU (all profile regions) to one .bin "
+                            "before flashing — your way back from a bad write")
+    add_bus_args(p)
+    p.add_argument("--chunk", type=lambda x: int(x, 0), default=0x400,
+                   help="bytes per ReadMemoryByAddress request (default 0x400)")
+    p.add_argument("--no-secure", action="store_true",
+                   help="skip Security Access (some ECUs read without it)")
+    p.add_argument("--tx", type=lambda x: int(x, 0), help="override request CAN id")
+    p.add_argument("--rx", type=lambda x: int(x, 0), help="override response CAN id")
+    p.add_argument("--seedkey-store", help="seed/key store JSON")
+    p.add_argument("--seedkey-server", help="seed/key HTTP server URL")
+    p.add_argument("--seedkey-dll", help="J2534 seed-key DLL")
+    p.add_argument("--seedkey-bridge", metavar="PATH",
+                   help="32-bit seed-key DLL served by a helper process")
+    p.add_argument("--python32", metavar="PATH",
+                   help="32-bit python.exe for --seedkey-bridge (auto-detected)")
+    p.add_argument("--seedkey-exe", help="external seed-key executable")
+    p.add_argument("--seedkey-options", default="", help="option string for the seed-key DLL")
+    p.add_argument("-o", "--output", default="ecu-backup.bin",
+                   help="combined backup .bin (default ecu-backup.bin)")
+    p.set_defaults(func=cmd_backup)
 
     # checksum
     p = sub.add_parser("checksum", help="verify/correct MEDC17 internal flash checksums")

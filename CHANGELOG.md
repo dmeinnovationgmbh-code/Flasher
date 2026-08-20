@@ -7,6 +7,19 @@ uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **The sniff → flash loop is now closed in the app.** A sniff derives an ECU
+  profile (CAN ids + memory map); a **"Für Expert-Flash verwenden"** button on
+  the result stages it as a `derived:sniff` profile and jumps to the Flashen
+  tab with it preselected. Until now the derived profile dead-ended at a YAML
+  download nothing in the UI could consume.
+- **Full-ECU backup before writing.** New `med17flasher backup` reads *every*
+  region in the profile's memory map into one `.bin` plus a manifest (per-region
+  address/size/offset/CRC32) — the way back from a bad write. In the app, the
+  expert-flash panel gained an **"ECU auslesen (Backup)"** step with one-click
+  download and a warning when a real write is armed without a backup. (A full
+  read typically needs a programming/extended session + Security Access, or
+  bench/boot mode.) New service `backup()` / `stage_derived_profile()` and
+  `POST /api/backup`, `GET /api/backup/download`, `POST /api/profile/import`.
 - **Sniffer tab in the app.** The passive-capture workflow is now a clickable
   tab, not just a CLI command: pick the interface (Tactrix/J2534, SocketCAN, …),
   hit start, and watch the UDS flow decode live (session, seed/key, download

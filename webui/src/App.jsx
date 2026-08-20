@@ -206,7 +206,8 @@ export default function App() {
             </>
           )}
           {tab === 'measure' && <MeasureSection samples={samples} meta={measureMeta} />}
-          {tab === 'sniff' && <SniffSection events={sniffEvents} meta={sniffMeta} />}
+          {tab === 'sniff' && <SniffSection events={sniffEvents} meta={sniffMeta}
+            onUseForFlash={() => setTab('flash')} />}
           {tab === 'diag' && <DiagSection onIdentified={applyIdent} />}
           {tab === 'maps' && (
             <MapsSection maps={maps} addons={addons} setAddons={setAddons}
@@ -470,21 +471,27 @@ function ExpertSection({ running }) {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState(null)
   const [pre, setPre] = useState(null)
+  const [backup, setBackup] = useState(null)
+  const [backingUp, setBackingUp] = useState(false)
+
+  const reload = () => api.getProfiles().then((d) => {
+    const ps = d.profiles || []
+    setProfiles(ps)
+    setForm((f) => ({
+      ...f,
+      // prefer a sniff-derived profile if one was just staged, else med1775
+      profileId: (ps.find((p) => p.id === 'derived:sniff')?.id)
+        || f.profileId || (ps.find((p) => p.id.includes('med1775'))?.id || ps[0]?.id || ''),
+    }))
+  }).catch(() => {})
 
   useEffect(() => {
-    api.getProfiles().then((d) => {
-      const ps = d.profiles || []
-      setProfiles(ps)
-      setForm((f) => ({
-        ...f,
-        profileId: f.profileId || (ps.find((p) => p.id.includes('med1775'))?.id || ps[0]?.id || ''),
-      }))
-    }).catch(() => {})
+    reload()
     api.getBackends().then((d) => setBackends(d.backends || [])).catch(() => {})
-    api.getExpert().then((c) => { if (c.firmware) setFw(c.firmware) }).catch(() => {})
+    api.getExpert().then((c) => { if (c.firmware) setFw(c.firmware); if (c.backup) setBackup(c.backup) }).catch(() => {})
   }, [])
 
-  const upd = (k, v) => { setPre(null); setForm((f) => ({ ...f, [k]: v })) }
+  const upd = (k, v) => { setPre(null); if (k === 'profileId' || k === 'backend') setBackup(null); setForm((f) => ({ ...f, [k]: v })) }
   const backendObj = backends.find((b) => b.id === form.backend)
   const isReal = backendObj ? backendObj.real : false
 
@@ -574,6 +581,21 @@ function ExpertSection({ running }) {
     } finally {
       setBusy(false)
     }
+  }
+
+  const onBackup = async () => {
+    setBackingUp(true); setMsg(null)
+    try {
+      await api.setExpertConfig({
+        profileId: form.profileId, backend: form.backend,
+        seedkey: seedCfg(), allowWrite: form.allowWrite,
+      })
+      const b = await api.runBackup()
+      setBackup(b)
+      setMsg({ ok: true, t: `Backup erstellt · ${b.size} Bytes · CRC32 ${b.crc32} · ${b.regions.length} Region(en)` })
+    } catch (err) {
+      setMsg({ ok: false, t: `Backup-Fehler: ${String(err.message || err)}` })
+    } finally { setBackingUp(false) }
   }
 
   const preOk = pre && pre.ok
@@ -712,6 +734,32 @@ function ExpertSection({ running }) {
               <b>Schreiben auf echte Hardware freigeben.</b> Zündung ein, stabile Spannung, korrektes Profil/Datei/Seed-Key. Ein falscher Flash kann das Steuergerät unbrauchbar machen.
             </span>
           </label>
+        )}
+
+        {isReal && (
+          <div style={{ border: '1px solid rgba(0,0,0,.1)', borderRadius: 10, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700 }}>Sicherung · ECU vor dem Schreiben auslesen</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <button onClick={onBackup} disabled={backingUp || !form.profileId}
+                style={{ padding: '9px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, border: '1px solid rgba(0,0,0,.15)', background: backingUp ? 'rgba(0,0,0,.05)' : '#fff' }}>
+                {backingUp ? 'Lese ECU…' : 'ECU auslesen (Backup)'}
+              </button>
+              {backup && (
+                <a href={api.backupDownloadUrl()} download
+                  style={{ padding: '9px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'rgba(52,199,89,.12)', color: '#177245', textDecoration: 'none' }}>
+                  ↓ Backup · {backup.size} B · {backup.crc32}
+                </a>
+              )}
+              <span style={{ fontSize: 11.5, color: FAINT }}>
+                Liest alle Profil-Regionen in eine Datei — dein Weg zurück. Braucht i.&nbsp;d.&nbsp;R. Session + Security (oder Bench-/Boot-Modus).
+              </span>
+            </div>
+            {form.allowWrite && !backup && (
+              <div style={{ fontSize: 12, color: '#8A4B00' }}>
+                ⚠ Noch kein Backup dieser Konfiguration — vor dem echten Schreiben dringend empfohlen.
+              </div>
+            )}
+          </div>
         )}
 
         {pre && (
@@ -908,13 +956,15 @@ const SNIFF_KIND_COLOR = {
   routine: MUTED, transfer: FAINT, exit: MUTED, reset: MUTED, did: MUTED, nrc: '#D70015',
 }
 
-function SniffSection({ events, meta }) {
+function SniffSection({ events, meta, onUseForFlash }) {
   const [backend, setBackend] = useState('simulator')
   const [backends, setBackends] = useState([])
   const [baudrate, setBaudrate] = useState(500000)
   const [extended, setExtended] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
+  const [staging, setStaging] = useState(false)
+  const [stageMsg, setStageMsg] = useState(null)
   const feedRef = useRef(null)
 
   useEffect(() => {
@@ -937,6 +987,16 @@ function SniffSection({ events, meta }) {
     } catch (e) { setErr(String(e.message || e)) } finally { setBusy(false) }
   }
   const stop = () => api.stopSniff().catch(() => {})
+  const useForFlash = async () => {
+    setStaging(true); setStageMsg(null)
+    try {
+      const cfg = await api.importDerivedProfile('sniff')
+      setStageMsg({ ok: true, t: `Profil „${cfg.profileName}" übernommen — wechsle zum Flashen-Tab.` })
+      if (onUseForFlash) setTimeout(onUseForFlash, 500)
+    } catch (e) {
+      setStageMsg({ ok: false, t: String(e.message || e) })
+    } finally { setStaging(false) }
+  }
 
   return (
     <>
@@ -1063,6 +1123,23 @@ function SniffSection({ events, meta }) {
                   ↓ {label}
                 </a>
               ))}
+            </div>
+          )}
+
+          {(report.downloadBlocks || []).length > 0 && (
+            <div style={{ borderTop: '1px solid rgba(0,0,0,.08)', paddingTop: 14, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <button onClick={useForFlash} disabled={staging}
+                style={{ padding: '10px 20px', borderRadius: 9, fontSize: 13.5, fontWeight: 700, color: '#fff', background: ACCENT, boxShadow: '0 4px 12px -4px rgba(255,122,0,.5)' }}>
+                {staging ? 'Übernehme…' : 'Für Expert-Flash verwenden →'}
+              </button>
+              <span style={{ fontSize: 12, color: MUTED }}>
+                Lädt das abgeleitete Profil (CAN-IDs + Memory-Map) in den Flashen-Tab.
+              </span>
+              {stageMsg && (
+                <span style={{ fontSize: 12.5, color: stageMsg.ok ? GREEN : '#D70015', flexBasis: '100%' }}>
+                  {stageMsg.t}
+                </span>
+              )}
             </div>
           )}
         </section>

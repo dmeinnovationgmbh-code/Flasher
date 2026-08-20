@@ -127,3 +127,20 @@ def test_cli_ingest(capsys):
         out = capsys.readouterr().out
         assert "Ingest complete" in out
         assert "recovered seed/key" in out  # 3 distinct-seed pairs -> xor recovered
+
+
+def test_cli_backup_simulator(capsys):
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "bk.bin")
+        rc = cli.main(["backup", "--simulator",
+                       "--profile", "config/med17_7_5_demo.yaml", "-o", out])
+        assert rc == 0
+        o = capsys.readouterr().out
+        assert "backup complete" in o
+        # demo profile has ASW 0x2000 + CAL 0x1000
+        assert os.path.getsize(out) == 0x3000
+        man = os.path.splitext(out)[0] + ".manifest.txt"
+        assert os.path.isfile(man)
+        with open(man) as fh:
+            body = fh.read()
+        assert "ASW" in body and "CAL" in body and "crc32=" in body

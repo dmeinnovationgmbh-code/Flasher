@@ -106,6 +106,7 @@ and [`docs/SEEDKEY.md`](docs/SEEDKEY.md) for plugging in your ECU's algorithm.
 med17flasher flash          reprogram an ECU from a firmware file (.bin/.hex/.s19)
 med17flasher identify       read identification DIDs
 med17flasher read           read a memory range to a file
+med17flasher backup         read the ENTIRE ECU (all profile regions) to one .bin before flashing
 med17flasher seedkey        compute a key from a seed
 med17flasher seedkey-solve  recover a seed/key algorithm from captured pairs
 med17flasher seedkey-server run the seed/key network server (HTTP + TCP)

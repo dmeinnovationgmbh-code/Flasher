@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import urllib.request
 
@@ -601,3 +602,47 @@ def test_sniff_config_reports_idle():
     cfg = svc.sniff_config()
     assert cfg["running"] is False
     assert cfg["report"] is None
+
+
+def _sniff_demo_to_stopped(svc):
+    sub = svc.subscribe()
+    try:
+        svc.start_sniff(backend="simulator", profile_id="med17_7_5_demo")
+        import time
+        end = time.time() + 30
+        while time.time() < end:
+            try:
+                ev = sub.q.get(timeout=5)
+            except queue.Empty:
+                break
+            if ev.get("type") == "sniff" and ev.get("event") == "stopped":
+                break
+    finally:
+        svc.unsubscribe(sub)
+
+
+def test_stage_derived_profile_closes_the_sniff_to_flash_loop():
+    svc = FlashService(throttle_kbs=0)
+    _sniff_demo_to_stopped(svc)
+    cfg = svc.stage_derived_profile("sniff")
+    assert cfg["profileId"] == "derived:sniff"
+    assert len(cfg["regions"]) == 2                    # both RequestDownload blocks
+    assert "derived:sniff" in [p["id"] for p in svc.list_profiles()]
+    # the derived profile is now usable by the expert flash
+    ec = svc.configure_expert(profile_id="derived:sniff", backend="simulator",
+                              seedkey={"source": "profile"})
+    assert ec["profileName"]
+
+
+def test_full_ecu_backup_and_download():
+    svc = FlashService(throttle_kbs=0)
+    _sniff_demo_to_stopped(svc)
+    svc.stage_derived_profile("sniff")
+    svc.configure_expert(profile_id="derived:sniff", backend="simulator",
+                         seedkey={"source": "profile"})
+    bk = svc.backup()
+    assert bk["size"] == 0x3000
+    assert {r["address"] for r in bk["regions"]} >= {"0x80040000", "0x80042000"}
+    assert svc.expert_config()["backup"] is not None
+    path, fn = svc.backup_file()
+    assert fn.endswith(".bin") and os.path.getsize(path) == 0x3000

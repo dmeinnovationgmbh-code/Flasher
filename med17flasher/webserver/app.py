@@ -129,6 +129,17 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_file(self, path: str, filename: str) -> None:
+        with open(path, "rb") as fh:
+            body = fh.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(len(body)))
+        self._cors()
+        self.end_headers()
+        self.wfile.write(body)
+
     # -- verbs ---------------------------------------------------------- #
     def do_OPTIONS(self) -> None:  # noqa: N802
         self.send_response(204)
@@ -195,6 +206,12 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 filename, text = self._svc.sniff_download(kind)
                 self._csv(text, filename)
+            except ValueError as exc:
+                self._json(404, {"error": str(exc)})
+        elif path == "/api/backup/download":
+            try:
+                fpath, filename = self._svc.backup_file()
+                self._send_file(fpath, filename)
             except ValueError as exc:
                 self._json(404, {"error": str(exc)})
         elif path == "/api/flash/stream":
@@ -296,6 +313,19 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/sniff/stop":
             self._svc.stop_sniff()
             self._json(200, {"stopped": True})
+        elif path == "/api/profile/import":
+            body = self._read_json()
+            try:
+                self._json(200, self._svc.stage_derived_profile(body.get("source", "sniff")))
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+        elif path == "/api/backup":
+            try:
+                self._json(200, self._svc.backup())
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self._json(502, {"error": str(exc)})
         elif path == "/api/checksum/correct":
             try:
                 self._json(200, self._svc.checksum_correct())

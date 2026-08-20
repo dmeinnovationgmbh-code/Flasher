@@ -174,6 +174,11 @@ class FlashService:
         self._sniff_report: Optional[dict] = None
         self._sniff_outdir: Optional[str] = None
 
+        # A profile derived from a sniff, staged for the expert flash, and the
+        # last full-ECU backup taken (path + crc32), for the pre-write gate.
+        self._derived_profile: Optional[EcuProfile] = None
+        self._backup: Optional[dict] = None
+
     # ------------------------------------------------------------------ #
     # Vehicle / maps / telemetry
     # ------------------------------------------------------------------ #
@@ -650,9 +655,130 @@ class FlashService:
     # Real ("expert") flash: profile + backend + firmware + seed/key
     # ------------------------------------------------------------------ #
     def list_profiles(self) -> List[dict]:
-        """Bundled ECU profiles the UI can pick (incl. the real med1775 flow)."""
+        """Bundled ECU profiles the UI can pick (incl. the real med1775 flow).
 
-        return list_profile_files()
+        If a profile was derived from a sniff and staged, it is offered too,
+        under the synthetic id ``derived:sniff`` — that closes the
+        sniff → derive → flash loop.
+        """
+
+        profiles = list(list_profile_files())
+        if self._derived_profile is not None:
+            profiles.append({
+                "id": "derived:sniff",
+                "name": f"{self._derived_profile.name} · aus Sniff abgeleitet",
+                "description": self._derived_profile.description or "aus einem Mitschnitt",
+                "path": "",
+            })
+        return profiles
+
+    def stage_derived_profile(self, source: str = "sniff") -> dict:
+        """Load the profile a sniff derived and select it for the expert flash.
+
+        Reads ``mitschnitt.profile.yaml`` from the last sniff, makes it the
+        active expert profile under the id ``derived:sniff``, and returns the
+        refreshed expert config — the UI's "use this for flashing" step.
+        """
+
+        if source != "sniff":
+            raise ValueError(f"unbekannte Quelle: {source!r}")
+        if not self._sniff_outdir:
+            raise ValueError("noch kein Sniff-Ergebnis vorhanden")
+        path = os.path.join(self._sniff_outdir, "mitschnitt.profile.yaml")
+        if not os.path.isfile(path):
+            raise ValueError("kein abgeleitetes Profil vorhanden — zuerst sniffen")
+        prof = load_profile(path)
+        if not prof.memory_map:
+            raise ValueError("das abgeleitete Profil hat keine Speicherregionen "
+                             "(im Mitschnitt fehlten RequestDownload-Blöcke)")
+        self._derived_profile = prof
+        self._expert_profile = prof
+        self._expert_profile_id = "derived:sniff"
+        return self.expert_config()
+
+    def backup(self, out_dir: Optional[str] = None) -> dict:
+        """Read the ENTIRE configured ECU (every profile region) to one file.
+
+        The way back from a bad write. Uses the expert profile/backend/seed-key,
+        reads each region over UDS and concatenates them; returns a manifest
+        with per-region CRC32. The file stays server-side for one-click
+        download. Real reads usually need programming/extended session +
+        Security Access (or bench/boot mode).
+        """
+
+        import zlib
+
+        prof = self._expert_profile
+        if prof is None:
+            raise ValueError("kein Profil gewählt")
+        regions = list(prof.memory_map)
+        if not regions:
+            raise ValueError("Profil hat keine Speicherregionen")
+
+        backend = self._expert_backend
+        is_sim = backend == "simulator"
+        resolver = self._build_resolver(prof, self._expert_seedkey)
+        uds, close = self._open_session(prof, backend, is_sim)
+        combined = bytearray()
+        manifest: List[dict] = []
+        try:
+            uds.start_tester_present(prof.timing.tester_present_period)
+            try:
+                uds.enter_extended_session()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                seed = uds.request_seed(prof.security.request_seed_level)
+                if any(seed):
+                    key = resolver.compute(prof.name, prof.security.request_seed_level, seed)
+                    uds.send_key(prof.security.send_key_level, key)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("backup security access failed: %s", exc)
+            for r in regions:
+                data = bytearray()
+                while len(data) < r.size:
+                    n = min(0x400, r.size - len(data))
+                    block = uds.read_memory_by_address(r.start + len(data), n)
+                    if not block:
+                        raise ValueError(
+                            f"ECU lieferte keine Daten bei 0x{r.start + len(data):08X} "
+                            f"(Region {r.name}) — Session/Security oder Bench-Modus nötig?")
+                    data.extend(block)
+                crc = zlib.crc32(bytes(data[:r.size])) & 0xFFFFFFFF
+                manifest.append({"name": r.name, "address": f"0x{r.start:08X}",
+                                 "size": r.size, "offset": len(combined),
+                                 "crc32": f"0x{crc:08X}"})
+                combined.extend(data[:r.size])
+        finally:
+            try:
+                uds.stop_tester_present()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                close()
+            except Exception:  # noqa: BLE001
+                pass
+
+        out_dir = out_dir or tempfile.mkdtemp(prefix="backup_")
+        safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in prof.name)
+        path = os.path.join(out_dir, f"ecu-backup-{safe}.bin")
+        with open(path, "wb") as fh:
+            fh.write(bytes(combined))
+        total_crc = zlib.crc32(bytes(combined)) & 0xFFFFFFFF
+        self._backup = {
+            "path": path, "filename": os.path.basename(path),
+            "size": len(combined), "crc32": f"0x{total_crc:08X}",
+            "regions": manifest, "backend": backend,
+            "profileId": self._expert_profile_id,
+        }
+        return {k: v for k, v in self._backup.items() if k != "path"}
+
+    def backup_file(self):
+        """Return ``(path, filename)`` of the last backup for download."""
+
+        if not self._backup or not os.path.isfile(self._backup["path"]):
+            raise ValueError("noch kein Backup vorhanden")
+        return self._backup["path"], self._backup["filename"]
 
     def list_backends(self) -> dict:
         """Usable transports + seed/key algorithms for the expert-flash panel."""
@@ -784,6 +910,8 @@ class FlashService:
         }
 
     def _load_profile_by_id(self, profile_id: str) -> EcuProfile:
+        if profile_id == "derived:sniff" and self._derived_profile is not None:
+            return self._derived_profile
         for p in list_profile_files():
             if p["id"] == profile_id:
                 return load_profile(p["path"])
@@ -820,6 +948,13 @@ class FlashService:
             "repo": self.repo_config(),
             "allowWrite": self._expert_allow_write,
             "firmware": self.firmware_summary(),
+            # A full backup taken for THIS profile+backend (else null); the UI
+            # warns before a real write when none matches.
+            "backup": ({k: v for k, v in self._backup.items() if k != "path"}
+                       if (self._backup
+                           and self._backup.get("profileId") == self._expert_profile_id
+                           and self._backup.get("backend") == self._expert_backend)
+                       else None),
             "ready": bool(prof and self._uploaded),
             # A real (non-sim) write additionally needs the explicit opt-in.
             "willWrite": bool(prof and self._uploaded and (is_sim or self._expert_allow_write)),
