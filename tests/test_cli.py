@@ -69,7 +69,12 @@ def test_cli_flash_dry_run(capsys):
             "--base", "0x80040000", fw,
         ])
         assert rc == 0
-        assert "Dry run" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        # --dry-run now runs the live rehearsal (preflight): it must have
+        # entered the programming session and completed Security Access, and
+        # written nothing. The old behaviour only printed the planned blocks.
+        assert "Preflight" in out
+        assert "security access granted" in out
 
 
 def test_cli_identify_simulator(capsys):
