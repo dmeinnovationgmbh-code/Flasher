@@ -109,18 +109,18 @@ Name: "{autodesktop}\{#AppShortName}"; Filename: "{app}\{#AppExeName}"; IconFile
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppShortName}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
-{ ---- Bundled Tactrix / J2534 driver auto-install ------------------------- }
-{
-  The operator drops the official Tactrix driver installer into
-  packaging\drivers\ before building (any .exe or .msi). Setup copies that
-  folder to {tmp}\drivers and, after the app files are in place, runs each
-  installer silently. Silent flags default to "/S" (the Tactrix/NSIS and FTDI
-  CDM installers use it); to override for a different packer, drop a plain-text
-  file "_silent_args.txt" next to the installer whose contents are passed
-  verbatim to every .exe instead.
-}
+// ---- Bundled Tactrix / J2534 driver auto-install -------------------------
+// The operator drops the official Tactrix driver installer into
+// packaging\drivers\ before building (any .exe or .msi). Setup copies that
+// folder to {tmp}\drivers and, after the app files are in place, runs each
+// installer silently. Silent flags default to "/S" (the Tactrix/NSIS and FTDI
+// CDM installers use it); to override for a different packer, drop a plain-text
+// file "_silent_args.txt" next to the installer whose contents are passed
+// verbatim to every .exe instead.
+// NB: use // comments here, not { } -- a brace comment would be closed early by
+// the first "}" in a constant like {tmp}, which is a syntax error.
 
-{ Read optional per-build silent-flag override; default to "/S". }
+// Read optional per-build silent-flag override; default to "/S".
 function SilentArgs(): String;
 var
   Lines: TArrayOfString;

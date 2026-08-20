@@ -187,3 +187,37 @@ def test_iss_has_tactrix_driver_autoinstall():
     drivers = os.path.join(PACKAGING, "drivers")
     assert os.path.isdir(drivers)
     assert os.path.isfile(os.path.join(drivers, "README.txt"))
+
+
+def test_iss_code_has_no_inno_constant_inside_brace_comment():
+    """Guard the Windows-only installer compile: an Inno constant like {tmp}
+    inside a Pascal '{ }' comment closes the comment at its first '}', which is
+    a syntax error ISCC only reports on a Windows runner. Emulate ISCC's
+    tokenizer over the [Code] section and reject a '{' opening inside a brace
+    comment (that '{' is a constant whose '}' will end the comment early)."""
+    text = _iss_text()
+    code = text[text.index("\n[Code]"):]
+    in_brace = in_line = in_str = False
+    prev = ""
+    for i, c in enumerate(code):
+        if in_line:
+            if c == "\n":
+                in_line = False
+        elif in_str:
+            if c == "'":
+                in_str = False
+        elif in_brace:
+            assert c != "{", (
+                "Inno constant inside a '{ }' comment at offset %d of [Code] -- "
+                "use // comments there instead" % i
+            )
+            if c == "}":
+                in_brace = False
+        else:
+            if c == "'":
+                in_str = True
+            elif c == "{":
+                in_brace = True
+            elif c == "/" and prev == "/":
+                in_line = True
+        prev = c
