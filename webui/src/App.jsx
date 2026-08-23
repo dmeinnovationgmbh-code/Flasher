@@ -463,7 +463,7 @@ function ExpertSection({ running }) {
   const [backends, setBackends] = useState([])
   const [form, setForm] = useState({
     profileId: '', backend: 'simulator', seedSource: 'profile',
-    seedUrl: '', seedPath: '', seedOptions: '', python32: '', allowWrite: false,
+    seedUrl: '', seedPath: '', seedScript: '', seedOptions: '', python32: '', allowWrite: false,
     repoUrl: '', repoToken: '',
   })
   const [fw, setFw] = useState(null)
@@ -547,6 +547,7 @@ function ExpertSection({ running }) {
     if (s === 'dll' || s === 'bridge' || s === 'exe')
       return { source: s, path: form.seedPath, options: form.seedOptions, python32: form.python32 }
     if (s === 'store') return { source: 'store', path: form.seedPath }
+    if (s === 'sa2') return { source: 'sa2', script: form.seedScript }
     return { source: 'profile' }
   }
 
@@ -725,6 +726,7 @@ function ExpertSection({ running }) {
               <option value="bridge">Vendor-DLL über 32-Bit-Helfer (erzwungen)</option>
               <option value="exe">Seed/Key-EXE</option>
               <option value="store">Seed/Key-Katalog (JSON)</option>
+              <option value="sa2">VW/Audi SA2-Skript</option>
             </select>
           </div>
           {seedNeedsUrl && (
@@ -739,6 +741,14 @@ function ExpertSection({ running }) {
               <label style={fieldLabel}>{form.seedSource === 'store' ? 'JSON-Pfad' : 'Pfad zur DLL/EXE'}</label>
               <input style={inputStyle} placeholder={form.seedSource === 'store' ? 'seedkeys.json' : 'MED1775_12_42_00.dll'}
                 value={form.seedPath} onChange={(e) => upd('seedPath', e.target.value)} />
+            </div>
+          )}
+          {form.seedSource === 'sa2' && (
+            <div>
+              <label style={fieldLabel}>SA2-Bytecode (aus den Flashdaten/ODX)</label>
+              <input style={{ ...inputStyle, fontFamily: MONO, fontSize: 12 }}
+                placeholder="68 02 81 49 93 a5 …"
+                value={form.seedScript} onChange={(e) => upd('seedScript', e.target.value)} />
             </div>
           )}
         </div>

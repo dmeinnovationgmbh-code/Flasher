@@ -34,10 +34,36 @@ Available reference algorithms (`med17flasher backends` lists them):
 | `med17`   | LFSR/Galois feedback rounds + rotate (`k, rounds, shift, xor_out`) |
 | `vag_crc` | CRC-mix (`poly, init, app_key`)                    |
 | `fixed`   | constant key (for "security disabled" / bench)     |
+| `sa2`     | **VW/Audi SA2 bytecode VM** (`script` = SA2 bytecode) — the real VAG algorithm |
 
-These are **deterministic and self-consistent** — the simulator validates keys
-with the very same code, which is what makes the end-to-end tests possible — but
-they are *not* a captured production routine.
+`xor`/`add`/`sum`/`med17`/`vag_crc` are **deterministic and self-consistent** —
+the simulator validates keys with the very same code, which is what makes the
+end-to-end tests possible — but they model the *shapes* of security access, not
+a captured production routine. **`sa2` is different: it is the actual
+Volkswagen-Group algorithm.**
+
+### VW/Audi SA2 — the DLL-free VAG unlock
+
+VAG ECUs (MED17/EDC17/…) guard programming with **SA2**: the ECU's flash
+container (FRF/ODX/`.sgo`) carries a short **bytecode** — the *SA2 script* — that
+a tiny stack machine runs over the seed to compute the key. Because the script,
+not a fixed formula, encodes the secret, one interpreter unlocks *every* VAG ECU
+whose SA2 script you have — no vendor DLL.
+
+Supply the script (from the flashdaten) as the `script` param:
+
+```bash
+med17flasher seedkey 1a1b1c1d --algorithm sa2 \
+    --param script=6802819349a55a55aa4a05878105952668058249845aa5aa5558703f7806a4c
+# -> 6a37f02e
+```
+
+It is proven against the published known-answer vector
+(`seed 0x1A1B1C1D → key 0x6A37F02E`). In the app, pick **"VW/Audi SA2-Skript"**
+as the seed/key source and paste the bytecode; in a profile, set
+`security.algorithm: sa2` with `params.script`. The opcode semantics are a clean
+re-implementation of the MIT-licensed reference by
+[bri3d/sa2_seed_key](https://github.com/bri3d/sa2_seed_key).
 
 ## The seed/key store
 

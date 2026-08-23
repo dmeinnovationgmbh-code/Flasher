@@ -7,6 +7,17 @@ uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **VW/Audi SA2 seed/key — the DLL-free VAG unlock.** SA2 is the real
+  Volkswagen-Group security-access mechanism: the ECU's flash container carries
+  a short bytecode (the "SA2 script") that a tiny stack machine runs over the
+  seed to produce the key. A new `sa2` algorithm implements that bytecode VM
+  (opcodes rotate/add/sub/xor/loop/branch), so with the SA2 script from the
+  flashdaten it computes the key for *any* seed — no vendor DLL. Proven against
+  the published known-answer vector (`seed 0x1A1B1C1D → key 0x6A37F02E`).
+  Usable as `seedkey --algorithm sa2 --param script=…`, as an ECU-profile
+  security algorithm, and as a new **"VW/Audi SA2-Skript"** seed/key source in
+  the app's expert flash. The opcode semantics are a clean re-implementation of
+  the MIT-licensed reference by bri3d (`github.com/bri3d/sa2_seed_key`).
 - **Recover the seed/key algorithm in the app.** The Sniffer accumulates the
   seed/key pairs across every session (dedup by seed); a **"Algorithmus lösen"**
   button runs the solver and, when it is unambiguous (≥2 different seeds, one

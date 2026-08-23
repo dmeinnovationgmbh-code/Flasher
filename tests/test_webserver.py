@@ -211,8 +211,14 @@ def test_build_resolver_sources(service):
     assert hasattr(service._build_resolver(prof, {"source": "profile"}), "compute")
     assert hasattr(service._build_resolver(prof, {"source": "server",
                                                   "url": "http://h:1/"}), "compute")
+    # SA2 with a script resolves and actually computes a key
+    sa2_script = bytes([0x68, 0x02, 0x81, 0x49, 0x93, 0xa5, 0x5a, 0x55, 0xaa, 0x4a,
+                        0x05, 0x87, 0x81, 0x05, 0x95, 0x26, 0x68, 0x05, 0x82, 0x49,
+                        0x84, 0x5a, 0xa5, 0xaa, 0x55, 0x87, 0x03, 0xf7, 0x80, 0x6a, 0x4c]).hex()
+    sa2 = service._build_resolver(prof, {"source": "sa2", "script": sa2_script})
+    assert sa2.compute("x", 0x11, (0x1A1B1C1D).to_bytes(4, "big")) == (0x6A37F02E).to_bytes(4, "big")
     for bad in ({"source": "server"}, {"source": "dll"}, {"source": "exe"},
-                {"source": "store"}, {"source": "bogus"}):
+                {"source": "store"}, {"source": "sa2"}, {"source": "bogus"}):
         with pytest.raises(ValueError):
             service._build_resolver(prof, bad)
 

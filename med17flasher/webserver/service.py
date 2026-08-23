@@ -1052,6 +1052,15 @@ class FlashService:
         src = (cfg or {}).get("source", "profile")
         if src == "profile":
             return ProfileSeedKey(profile)
+        if src == "sa2":
+            # VW/Audi SA2: run the ECU's SA2 bytecode over the seed. The script
+            # comes from the flashdaten/ODX — the DLL-free VAG unlock.
+            from ..seedkey import AlgorithmResolver, get_algorithm
+
+            script = (cfg.get("script") or "").strip()
+            if not script:
+                raise ValueError("SA2-Skript fehlt")
+            return AlgorithmResolver(get_algorithm("sa2"), {"script": script})
         if src == "server":
             from ..seedkey.server import SeedKeyClient
 

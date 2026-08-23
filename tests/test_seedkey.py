@@ -34,9 +34,11 @@ def test_all_builtins_registered():
 
 
 def test_algorithms_deterministic():
+    # sa2 needs a 'script'; pass one so it is exercised alongside the rest.
+    params = {"k": "0x1C5A36B7", "script": bytes(_SA2_SCRIPT).hex()}
     for name in list_algorithms():
-        k1 = compute_key(name, SEED, level=0x11, params={"k": "0x1C5A36B7"})
-        k2 = compute_key(name, SEED, level=0x11, params={"k": "0x1C5A36B7"})
+        k1 = compute_key(name, SEED, level=0x11, params=dict(params))
+        k2 = compute_key(name, SEED, level=0x11, params=dict(params))
         assert k1 == k2
 
 
@@ -114,3 +116,42 @@ def test_tcp_server():
         s.close()
         assert resp.startswith("OK ")
         assert resp.split()[1] == svc.store.compute("MED17.7.5", 0x11, SEED).hex()
+
+
+# --- VW/Audi SA2 bytecode seed/key ---------------------------------------- #
+_SA2_SCRIPT = [0x68, 0x02, 0x81, 0x49, 0x93, 0xa5, 0x5a, 0x55, 0xaa, 0x4a, 0x05,
+               0x87, 0x81, 0x05, 0x95, 0x26, 0x68, 0x05, 0x82, 0x49, 0x84, 0x5a,
+               0xa5, 0xaa, 0x55, 0x87, 0x03, 0xf7, 0x80, 0x6a, 0x4c]
+
+
+def test_sa2_known_answer_vector():
+    """The published bri3d vector: seed 0x1A1B1C1D -> key 0x6A37F02E. This is
+    the proof the SA2 bytecode VM is the real algorithm, not an approximation."""
+    from med17flasher.seedkey import compute_key
+
+    key = compute_key("sa2", (0x1A1B1C1D).to_bytes(4, "big"), params={"script": _SA2_SCRIPT})
+    assert key == (0x6A37F02E).to_bytes(4, "big")
+
+
+def test_sa2_accepts_hex_string_and_spaced_forms():
+    from med17flasher.seedkey import compute_key
+
+    seed = (0x1A1B1C1D).to_bytes(4, "big")
+    ref = compute_key("sa2", seed, params={"script": _SA2_SCRIPT})
+    assert compute_key("sa2", seed, params={"script": bytes(_SA2_SCRIPT).hex()}) == ref
+    spaced = " ".join(f"{b:02x}" for b in _SA2_SCRIPT)
+    assert compute_key("sa2", seed, params={"script": spaced}) == ref
+
+
+def test_sa2_missing_script_raises():
+    from med17flasher.seedkey import compute_key
+
+    with pytest.raises(ValueError):
+        compute_key("sa2", b"\x00\x00\x00\x01", params={})
+
+
+def test_sa2_unknown_opcode_raises():
+    from med17flasher.seedkey import compute_key
+
+    with pytest.raises(ValueError):
+        compute_key("sa2", b"\x00\x00\x00\x01", params={"script": [0xFF, 0x4C]})
