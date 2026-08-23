@@ -1,4 +1,4 @@
-; Inno Setup script for the DME Innovation MED17 Flasher desktop app.
+; Inno Setup script for the DME Innovation Flasher desktop app.
 ;
 ; Turns the single PyInstaller executable (dist\med17flasher-desktop.exe) into a
 ; classic Windows installer with Start-menu and (optional) desktop shortcuts,
@@ -18,9 +18,9 @@
 #define RepoRoot      AddBackslash(SourcePath) + ".."
 ; AppName is the full product name (wizard title, Add/Remove Programs).
 ; AppShortName names the shortcut inside the publisher's Start-menu folder, so
-; it does not repeat the company: Start menu -> DME Innovation -> MED17 Flasher.
-#define AppName       "DME Innovation MED17 Flasher"
-#define AppShortName  "MED17 Flasher"
+; it does not repeat the company: Start menu -> DME Innovation -> Flasher.
+#define AppName       "DME Innovation Flasher"
+#define AppShortName  "Flasher"
 #define AppPublisher  "DME Innovation GmbH"
 #define AppGroup      "DME Innovation"
 #define AppExeName    "med17flasher-desktop.exe"
@@ -55,7 +55,7 @@ AppId={{5B0C6E2A-3D71-4C9F-9E2B-7F1A6C4D0E93}}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
-DefaultDirName={autopf}\DME Innovation\MED17 Flasher
+DefaultDirName={autopf}\DME Innovation\Flasher
 DefaultGroupName={#AppGroup}
 DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\{#AppExeName}

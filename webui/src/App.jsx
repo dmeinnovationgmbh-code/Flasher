@@ -2,9 +2,12 @@ import React, { useEffect, useRef, useState } from 'react'
 import * as api from './api.js'
 import { LOG_COLORS, fmtAddr, fmtBytes, fmtEta, nowTime } from './format.js'
 
+// Semantic palette — black/white base, colour only where it carries meaning:
+// orange = the action you take, green = connected / done, red = irreversible danger.
 const ACCENT = '#FF7A00'
 const ACCENT_DARK = '#E86E00'
 const GREEN = '#1F9D4D'
+const DANGER = '#D70015'
 const MUTED = '#6E6E73'
 const FAINT = '#AEAEB2'
 const MONO = "ui-monospace,'SF Mono','JetBrains Mono',monospace"
@@ -258,10 +261,11 @@ function Header({ voltText, bus }) {
     }}>
       <img src="./assets/dme-logo.svg" alt="DME Innovation" style={{ height: 22, width: 'auto' }} />
       <div style={{ width: 1, height: 18, background: 'rgba(0,0,0,.1)' }} />
-      {/* The logo already reads "DME Innovation"; together they say the full
-          product name without printing the company twice. */}
-      <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: '.04em', whiteSpace: 'nowrap', textTransform: 'uppercase' }}>
-        MED17 Flasher
+      {/* The logo already reads "DME Innovation"; with the word below it the
+          header says the product name — "DME Innovation Flasher" — without
+          printing the company twice. */}
+      <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: '.16em', whiteSpace: 'nowrap', textTransform: 'uppercase' }}>
+        Flasher
       </div>
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 12px', borderRadius: 99, background: 'rgba(0,0,0,.04)', fontSize: 12, fontWeight: 500 }}>
@@ -321,6 +325,13 @@ function WriteSection({ flash, p, badgeText, badgeColor, running, onAbort, file 
         </span>
       </div>
       <div style={{ padding: '18px 20px 20px' }}>
+        {!flash.done && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 16, padding: '9px 12px', borderRadius: 9, background: 'rgba(215,0,21,.06)', border: '1px solid rgba(215,0,21,.22)' }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: DANGER, flexShrink: 0 }} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: DANGER }}>Schreiben ist unumkehrbar</span>
+            <span style={{ fontSize: 12, color: MUTED }}>— das Steuergerät wird überschrieben. Backup wird vorher gesichert.</span>
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 18 }}>
           <span style={{ fontFamily: "'Titillium Web',sans-serif", fontSize: 46, fontWeight: 700, letterSpacing: '-.02em', lineHeight: 1, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', flexShrink: 0 }}>{p} %</span>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontFamily: MONO, fontSize: 12, color: MUTED, fontVariantNumeric: 'tabular-nums' }}>
@@ -1433,7 +1444,7 @@ function Sidebar({ vehicle, onTool }) {
       </section>
 
       <div style={{ fontSize: 11, color: FAINT, textAlign: 'center', lineHeight: 1.6 }}>
-        MED17 Flasher {vehicle.version ? 'v' + vehicle.version : ''}<br />DME Innovation GmbH
+        DME Innovation Flasher {vehicle.version ? 'v' + vehicle.version : ''}<br />DME Innovation GmbH
       </div>
     </div>
   )
