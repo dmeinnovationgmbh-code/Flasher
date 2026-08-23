@@ -1580,10 +1580,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-o", "--output", required=True)
     p.set_defaults(func=cmd_read)
 
-    # backup — read the whole ECU before writing
+    # backup: read the whole ECU before writing
     p = sub.add_parser("backup",
                        help="read the ENTIRE ECU (all profile regions) to one .bin "
-                            "before flashing — your way back from a bad write")
+                            "before flashing; your way back from a bad write")
     add_bus_args(p)
     p.add_argument("--chunk", type=lambda x: int(x, 0), default=0x400,
                    help="bytes per ReadMemoryByAddress request (default 0x400)")

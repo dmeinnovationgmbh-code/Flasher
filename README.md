@@ -49,7 +49,7 @@ The GUI needs Tkinter (usually `apt install python3-tk` on Debian/Ubuntu).
 
 ## Download the desktop app
 
-The **DME Innovation MED17 Flasher** ships as a single standalone executable (no Python
+The **DME Innovation Flasher** ships as a single standalone executable (no Python
 or Node needed) that opens the web UI in a window/browser and runs the real
 backend locally. **See [`docs/INSTALL.md`](docs/INSTALL.md) for step-by-step
 per-OS install instructions.**

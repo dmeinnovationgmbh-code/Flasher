@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the **DME Innovation MED17 Flasher** are documented here.
+All notable changes to the **DME Innovation Flasher** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/); this project
 uses [Semantic Versioning](https://semver.org/).
 
@@ -151,7 +151,7 @@ nothing has been validated on a real ECU yet** — read
   Node needed. Opens as a **native window** (pywebview) on Windows/macOS; falls
   back to the browser on Linux.
 - Windows **Inno Setup installer** with Start-menu and desktop shortcuts.
-- Branded **DME Innovation MED17 Flasher**, with the DME wordmark as the app icon.
+- Branded **DME Innovation Flasher**, with the DME wordmark as the app icon.
 - Robust startup: a missing/broken bundled profile falls back to a built-in one,
   a startup failure shows a native error dialog + writes `med17flasher.log`, and
   CI runs the frozen binary with `--selftest` so a build that crashes can't ship.

@@ -1066,8 +1066,8 @@ function SniffSection({ events, meta, onUseForFlash }) {
         </div>
         <div style={{ padding: '4px 20px 0', fontSize: 12, color: MUTED, lineHeight: 1.5 }}>
           Hört <b>rein passiv</b> mit, während ein anderes Werkzeug (z.&nbsp;B. Autotuner) über
-          einen geteilten OBD2-Bus liest/schreibt: <b>injiziert keine Frames</b>, agiert nie als
-          Tester und leitet danach Profil&nbsp;+&nbsp;Seed/Key ab. (Ein CAN-Controller quittiert
+          einen geteilten OBD2-Bus liest/schreibt. Der Sniffer <b>injiziert keine Frames</b>, agiert
+          nie als Tester und leitet danach Profil&nbsp;+&nbsp;Seed/Key ab. (Ein CAN-Controller quittiert
           empfangene Frames elektrisch mit dem ACK-Bit; für echte Funkstille braucht es ein
           Interface im Listen-Only-Modus.) „Simulator" fährt einen Demo-Flash zum Vorführen ohne Hardware.
         </div>
