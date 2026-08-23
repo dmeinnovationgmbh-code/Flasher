@@ -21,7 +21,7 @@ from .logging_setup import configure_logging, get_logger
 
 log = get_logger("desktop")
 
-_TITLE = "DME Innovation MED17 Flasher"
+_TITLE = "DME Innovation Flasher"
 
 
 def _log_path() -> str:
@@ -54,7 +54,7 @@ def _open_browser_and_wait(url: str, server) -> int:
     print("\n" + "=" * 58)
     print(f"  {_TITLE} läuft.")
     print(f"  Im Browser öffnen:  {url}")
-    print("  Fenster/Prozess offen lassen — Beenden stoppt die App.")
+    print("  Fenster/Prozess offen lassen. Beenden stoppt die App.")
     print("=" * 58 + "\n")
     try:
         while True:

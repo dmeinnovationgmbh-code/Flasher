@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import * as api from './api.js'
 import { LOG_COLORS, fmtAddr, fmtBytes, fmtEta, nowTime } from './format.js'
 
-// Semantic palette — black/white base, colour only where it carries meaning:
+// Semantic palette: black/white base, colour only where it carries meaning.
 // orange = the action you take, green = connected / done, red = irreversible danger.
 const ACCENT = '#FF7A00'
 const ACCENT_DARK = '#E86E00'
@@ -61,9 +61,9 @@ export default function App() {
     }).catch(() => {})
     api.getMaps().then((d) => setMaps(d.maps || [])).catch(() => {})
     setLogs([
-      { time: '—', cls: '', msg: 'Interface initialisiert · CAN 500 kBit/s' },
-      { time: '—', cls: 'ok', msg: 'ECU antwortet · Diagnosesession erweitert (0x10 03)' },
-      { time: '—', cls: '', msg: 'Identifikation gelesen · MED17.7.5 · M177 · C63 S (W205)' },
+      { time: '', cls: '', msg: 'Interface initialisiert · CAN 500 kBit/s' },
+      { time: '', cls: 'ok', msg: 'ECU antwortet · Diagnosesession erweitert (0x10 03)' },
+      { time: '', cls: '', msg: 'Identifikation gelesen · MED17.7.5 · M177 · C63 S (W205)' },
     ])
     const poll = setInterval(() => {
       api.getTelemetry().then((t) => {
@@ -261,8 +261,8 @@ function Header({ voltText, bus }) {
     }}>
       <img src="./assets/dme-logo.svg" alt="DME Innovation" style={{ height: 22, width: 'auto' }} />
       <div style={{ width: 1, height: 18, background: 'rgba(0,0,0,.1)' }} />
-      {/* The logo already reads "DME Innovation"; with the word below it the
-          header says the product name — "DME Innovation Flasher" — without
+      {/* The logo already reads "DME Innovation"; with the word beside it the
+          header says the product name "DME Innovation Flasher" without
           printing the company twice. */}
       <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: '.16em', whiteSpace: 'nowrap', textTransform: 'uppercase' }}>
         Flasher
@@ -328,8 +328,8 @@ function WriteSection({ flash, p, badgeText, badgeColor, running, onAbort, file 
         {!flash.done && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 16, padding: '9px 12px', borderRadius: 9, background: 'rgba(215,0,21,.06)', border: '1px solid rgba(215,0,21,.22)' }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: DANGER, flexShrink: 0 }} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: DANGER }}>Schreiben ist unumkehrbar</span>
-            <span style={{ fontSize: 12, color: MUTED }}>— das Steuergerät wird überschrieben. Backup wird vorher gesichert.</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: DANGER }}>Schreiben ist unumkehrbar.</span>
+            <span style={{ fontSize: 12, color: MUTED }}>Das Steuergerät wird überschrieben, Backup wird vorher gesichert.</span>
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 18 }}>
@@ -372,7 +372,7 @@ function WriteSection({ flash, p, badgeText, badgeColor, running, onAbort, file 
         {running && (
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 16, fontSize: 12, color: MUTED, animation: 'fadeSlide .3s ease both' }}>
             <Warn />
-            <span>Zündung eingeschaltet lassen und Vorgang nicht unterbrechen. Ladegerät empfohlen — automatischer Abbruch unter 11,5 V.</span>
+            <span>Zündung eingeschaltet lassen und Vorgang nicht unterbrechen. Ladegerät empfohlen, automatischer Abbruch unter 11,5 V.</span>
           </div>
         )}
 
@@ -516,7 +516,7 @@ function ExpertSection({ running }) {
       setFw(d.firmware)
       setMsg({ ok: true, t: `Firmware geladen · ${d.firmware.name} · ${d.firmware.programBytes} Bytes · CRC32 ${d.firmware.crc32}` })
     } catch {
-      setMsg({ ok: false, t: 'Upload/Parsing fehlgeschlagen — .bin / .hex / .s19 erwartet.' })
+      setMsg({ ok: false, t: 'Upload/Parsing fehlgeschlagen. Erwartet: .bin / .hex / .s19.' })
     } finally {
       setBusy(false)
     }
@@ -587,7 +587,7 @@ function ExpertSection({ running }) {
         seedkey: seedCfg(), allowWrite: form.allowWrite,
       })
       const r = await api.startExpertFlash()
-      if (r.started) setMsg({ ok: true, t: 'Echt-Flash gestartet — Fortschritt oben im Schreibvorgang.' })
+      if (r.started) setMsg({ ok: true, t: 'Echt-Flash gestartet. Fortschritt oben im Schreibvorgang.' })
       else setMsg({ ok: false, t: r.error || 'Es läuft bereits ein Schreibvorgang.' })
     } catch (err) {
       setMsg({ ok: false, t: String(err.message || err) })
@@ -625,7 +625,7 @@ function ExpertSection({ running }) {
         <span style={{ marginLeft: 'auto', fontSize: 12, color: FAINT }}>eigene Datei · echte UDS-Sequenz</span>
       </div>
       <div style={{ padding: '4px 20px 0', fontSize: 12, color: MUTED }}>
-        Eigene Firmware auf ein gewähltes Profil (z. B. MED17.7.5&nbsp;med1775) flashen — Simulator oder echter CAN-Adapter, mit Seed/Key aus Profil, Server oder DLL.
+        Eigene Firmware auf ein gewähltes Profil (z. B. MED17.7.5&nbsp;med1775) flashen. Simulator oder echter CAN-Adapter, mit Seed/Key aus Profil, Server oder DLL.
       </div>
       <div style={{ padding: '16px 20px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -685,7 +685,7 @@ function ExpertSection({ running }) {
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <div style={{ fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.filename}</div>
                         <div style={{ fontFamily: MONO, fontSize: 11, color: FAINT }}>
-                          {f.ecu || '—'}{f.sw_version ? ` · SW ${f.sw_version}` : ''} · {f.size} B
+                          {f.ecu || 'unbekannt'}{f.sw_version ? ` · SW ${f.sw_version}` : ''} · {f.size} B
                         </div>
                       </div>
                       <button onClick={() => onRepoUse(f.id)} disabled={busy}
@@ -722,7 +722,7 @@ function ExpertSection({ running }) {
           {fw && (
             <div style={{ marginTop: 6, fontFamily: MONO, fontSize: 11.5, color: GREEN }}>
               {fw.name} · {fw.programBytes} B · CRC32 {fw.crc32}
-              {fw.span && <> · {fw.span[0]}–{fw.span[1]}</>}
+              {fw.span && <> · {fw.span[0]} bis {fw.span[1]}</>}
             </div>
           )}
         </div>
@@ -789,12 +789,12 @@ function ExpertSection({ running }) {
                 </a>
               )}
               <span style={{ fontSize: 11.5, color: FAINT }}>
-                Liest alle Profil-Regionen in eine Datei — dein Weg zurück. Braucht i.&nbsp;d.&nbsp;R. Session + Security (oder Bench-/Boot-Modus).
+                Liest alle Profil-Regionen in eine Datei, dein Weg zurück. Braucht i.&nbsp;d.&nbsp;R. Session + Security (oder Bench-/Boot-Modus).
               </span>
             </div>
             {form.allowWrite && !backup && (
               <div style={{ fontSize: 12, color: '#8A4B00' }}>
-                ⚠ Noch kein Backup dieser Konfiguration — vor dem echten Schreiben dringend empfohlen.
+                ⚠ Noch kein Backup dieser Konfiguration, vor dem echten Schreiben dringend empfohlen.
               </div>
             )}
           </div>
@@ -808,7 +808,7 @@ function ExpertSection({ running }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               {pre.checks.map((c, i) => (
                 <div key={i} style={{ fontSize: 11.5, fontFamily: MONO, color: c.ok ? MUTED : (c.fatal ? '#D70015' : '#8A4B00') }}>
-                  {c.ok ? '✓' : (c.fatal ? '✕' : '!')} {c.name}{c.detail ? ` — ${c.detail}` : ''}
+                  {c.ok ? '✓' : (c.fatal ? '✕' : '!')} {c.name}{c.detail ? `: ${c.detail}` : ''}
                 </div>
               ))}
             </div>
@@ -848,7 +848,7 @@ const SERIES_COLORS = [ACCENT, '#0A84FF', GREEN, '#AF52DE', '#FF375F', '#FFB300'
 
 function Sparkline({ points, color, height = 54 }) {
   if (points.length < 2) {
-    return <div style={{ height, display: 'grid', placeItems: 'center', fontSize: 11, color: FAINT }}>—</div>
+    return <div style={{ height, display: 'grid', placeItems: 'center', fontSize: 11, color: FAINT }}>keine Daten</div>
   }
   const lo = Math.min(...points)
   const hi = Math.max(...points)
@@ -973,7 +973,7 @@ function MeasureSection({ samples, meta }) {
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                   <span style={{ fontSize: 12.5, fontWeight: 600, color: MUTED }}>{n}</span>
                   <span style={{ marginLeft: 'auto', fontFamily: "'Titillium Web',sans-serif", fontSize: 26, fontWeight: 700, letterSpacing: '-.02em', fontVariantNumeric: 'tabular-nums', color }}>
-                    {typeof val === 'number' ? val.toFixed(2) : '—'}
+                    {typeof val === 'number' ? val.toFixed(2) : '·'}
                   </span>
                   <span style={{ fontSize: 11.5, color: FAINT }}>{units[n]}</span>
                 </div>
@@ -1032,7 +1032,7 @@ function SniffSection({ events, meta, onUseForFlash }) {
     setStaging(true); setStageMsg(null)
     try {
       const cfg = await api.importDerivedProfile('sniff')
-      setStageMsg({ ok: true, t: `Profil „${cfg.profileName}" übernommen — wechsle zum Flashen-Tab.` })
+      setStageMsg({ ok: true, t: `Profil „${cfg.profileName}" übernommen. Wechsle zum Flashen-Tab.` })
       if (onUseForFlash) setTimeout(onUseForFlash, 500)
     } catch (e) {
       setStageMsg({ ok: false, t: String(e.message || e) })
@@ -1066,8 +1066,8 @@ function SniffSection({ events, meta, onUseForFlash }) {
         </div>
         <div style={{ padding: '4px 20px 0', fontSize: 12, color: MUTED, lineHeight: 1.5 }}>
           Hört <b>rein passiv</b> mit, während ein anderes Werkzeug (z.&nbsp;B. Autotuner) über
-          einen geteilten OBD2-Bus liest/schreibt — <b>injiziert keine Frames</b>, agiert nie als
-          Tester — und leitet danach Profil&nbsp;+&nbsp;Seed/Key ab. (Ein CAN-Controller quittiert
+          einen geteilten OBD2-Bus liest/schreibt: <b>injiziert keine Frames</b>, agiert nie als
+          Tester und leitet danach Profil&nbsp;+&nbsp;Seed/Key ab. (Ein CAN-Controller quittiert
           empfangene Frames elektrisch mit dem ACK-Bit; für echte Funkstille braucht es ein
           Interface im Listen-Only-Modus.) „Simulator" fährt einen Demo-Flash zum Vorführen ohne Hardware.
         </div>
@@ -1141,9 +1141,9 @@ function SniffSection({ events, meta, onUseForFlash }) {
         <section style={{ ...cardStyle, padding: '16px 20px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>Ergebnis · abgeleitet aus dem Mitschnitt</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10 }}>
-            {[['Frames', report.frames], ['Requests', report.requests], ['Sitzungen', (report.sessions || []).join(', ') || '—'],
-              ['Security', (report.securityLevels || []).join(', ') || '—'], ['erase', report.eraseRoutine || '—'],
-              ['checkMemory', report.checkMemory || '—']].map(([k, v]) => (
+            {[['Frames', report.frames], ['Requests', report.requests], ['Sitzungen', (report.sessions || []).join(', ') || 'keine'],
+              ['Security', (report.securityLevels || []).join(', ') || 'keine'], ['erase', report.eraseRoutine || 'keine'],
+              ['checkMemory', report.checkMemory || 'keine']].map(([k, v]) => (
               <div key={k} style={{ background: 'rgba(0,0,0,.04)', borderRadius: 9, padding: '9px 12px' }}>
                 <div style={{ fontSize: 11, color: MUTED }}>{k}</div>
                 <div style={{ fontFamily: MONO, fontSize: 13, fontWeight: 600 }}>{v}</div>
@@ -1285,9 +1285,9 @@ function DiagSection({ onIdentified }) {
           {err && <div style={{ fontSize: 12, color: '#D70015' }}>{err}</div>}
           {report && (
             <div>
-              {row('Sitzungen', report.sessions.join(', ') || '—', true)}
+              {row('Sitzungen', report.sessions.join(', ') || 'keine', true)}
               {row('Programmier-Level', report.programmingLevel || 'nicht gefunden', true)}
-              {report.identification.map((d) => row(d.name || d.did, d.value || '—', true))}
+              {report.identification.map((d) => row(d.name || d.did, d.value || 'unbekannt', true))}
               {report.seeds.map((s) => row(`Seed ${s.level}`, s.info, true))}
             </div>
           )}
@@ -1353,11 +1353,11 @@ function DiagSection({ onIdentified }) {
               {row('Datei', cks.name)}
               {row('Regionen', String(cks.blocks))}
               {cks.regions.map((r, i) => row(
-                `${r.start}–${r.end} (${r.algorithm})`,
+                `${r.start} bis ${r.end} (${r.algorithm})`,
                 r.ok ? '✓ ok' : `✗ ${r.computed} ≠ ${r.target}`, true))}
               {cks.blocks === 0 && (
                 <div style={{ fontSize: 12, color: MUTED, paddingTop: 8 }}>
-                  Keine MEDC17-Prüfsummenblöcke gefunden — bei einer reinen Kalibrierdatei ist das normal.
+                  Keine MEDC17-Prüfsummenblöcke gefunden. Bei einer reinen Kalibrierdatei ist das normal.
                 </div>
               )}
             </div>

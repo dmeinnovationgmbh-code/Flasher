@@ -77,7 +77,7 @@ SECTORS = [
 ]
 
 MAPS = [
-    {"id": "s1", "name": "Stage 1", "sub": "98–102 Oktan · Serienhardware", "base": 499,
+    {"id": "s1", "name": "Stage 1", "sub": "98 bis 102 Oktan · Serienhardware", "base": 499,
      "ps": 590, "psGain": "+80", "nm": 850, "nmGain": "+150",
      "features": ["Ladedruck & Zündung optimiert", "Vmax-Aufhebung",
                   "Prüfsumme automatisch korrigiert"]},
@@ -679,7 +679,7 @@ class FlashService:
 
         pairs = list(self._seedkey_pairs)
         if not pairs:
-            raise ValueError("keine Seed/Key-Paare — zuerst sniffen")
+            raise ValueError("keine Seed/Key-Paare vorhanden, zuerst sniffen")
         solver_pairs = [SeedKeyPair(bytes.fromhex(s), bytes.fromhex(k))
                         for _lvl, s, k in pairs]
         levels = {lvl for lvl, _s, _k in pairs}
@@ -697,12 +697,12 @@ class FlashService:
             msg = f"Algorithmus erkannt: {recovered['algorithm']} {recovered['params']}"
         elif len(distinct) < 2:
             msg = (f"{len(pairs)} Paar(e), aber nur {len(distinct)} unterschiedliche(r) "
-                   f"Seed(s) — noch eine Session mit anderem Seed sniffen.")
+                   f"Seed(s). Noch eine Session mit anderem Seed sniffen.")
         elif len(full) > 1:
             msg = (f"mehrdeutig: {len(full)} Algorithmen passen "
-                   f"({', '.join(r.algorithm for r in full)}) — mehr Paare sniffen.")
+                   f"({', '.join(r.algorithm for r in full)}). Mehr Paare sniffen.")
         else:
-            msg = "kein Algorithmus reproduziert alle Paare — mehr/andere Seeds sniffen."
+            msg = "kein Algorithmus reproduziert alle Paare. Mehr/andere Seeds sniffen."
         return {
             "pairs": len(pairs), "distinctSeeds": len(distinct),
             "recovered": ({"algorithm": recovered["algorithm"],
@@ -719,7 +719,7 @@ class FlashService:
 
         res = self.solve_seedkey()
         if res["recovered"] is None:
-            raise ValueError("noch kein eindeutiger Algorithmus — " + res["message"])
+            raise ValueError("noch kein eindeutiger Algorithmus: " + res["message"])
         recovered = self._seedkey_solution
 
         from ..seedkey import SeedKeyStore
@@ -774,7 +774,7 @@ class FlashService:
             raise ValueError("noch kein Sniff-Ergebnis vorhanden")
         path = os.path.join(self._sniff_outdir, "mitschnitt.profile.yaml")
         if not os.path.isfile(path):
-            raise ValueError("kein abgeleitetes Profil vorhanden — zuerst sniffen")
+            raise ValueError("kein abgeleitetes Profil vorhanden, zuerst sniffen")
         prof = load_profile(path)
         if not prof.memory_map:
             raise ValueError("das abgeleitete Profil hat keine Speicherregionen "
@@ -830,7 +830,7 @@ class FlashService:
                     if not block:
                         raise ValueError(
                             f"ECU lieferte keine Daten bei 0x{r.start + len(data):08X} "
-                            f"(Region {r.name}) — Session/Security oder Bench-Modus nötig?")
+                            f"(Region {r.name}): Session/Security oder Bench-Modus nötig?")
                     data.extend(block)
                 crc = zlib.crc32(bytes(data[:r.size])) & 0xFFFFFFFF
                 manifest.append({"name": r.name, "address": f"0x{r.start:08X}",
@@ -1165,12 +1165,12 @@ class FlashService:
             results = mc.verify(raw)
             if not results:
                 return {"name": name, "ok": True, "fatal": False,
-                        "detail": "keine Blöcke erkannt (Template-Offsets — an echtem "
+                        "detail": "keine Blöcke erkannt (Template-Offsets, an echtem "
                                   "Dump zu prüfen)"}
             bad = [r for r in results if not r.ok]
             if bad:
                 return {"name": name, "ok": False, "fatal": False,
-                        "detail": f"{len(bad)}/{len(results)} ungültig — vor dem "
+                        "detail": f"{len(bad)}/{len(results)} ungültig, vor dem "
                                   f"Schreiben im Diagnose-Tab korrigieren"}
             return {"name": name, "ok": True, "fatal": False,
                     "detail": f"{len(results)} Region(en) gültig"}

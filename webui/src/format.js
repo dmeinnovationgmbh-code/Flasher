@@ -23,7 +23,7 @@ export function fmtBytes(done, total) {
 
 export function fmtEta(seconds, running, done) {
   if (done) return '0:00'
-  if (!running) return '—'
+  if (!running) return '·'
   const s = Math.max(0, Math.round(seconds))
   return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0') + ' Min'
 }

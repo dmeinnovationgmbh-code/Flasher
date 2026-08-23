@@ -1486,7 +1486,7 @@ def cmd_webserver(args) -> int:
                   "verified profile); identify works, flashing is gated")
     server = WebServer(service, host=args.host, port=args.port)
     root = server._httpd.static_root  # type: ignore[attr-defined]
-    print(f"DME Innovation MED17 Flasher web UI on {server.url}")
+    print(f"DME Innovation Flasher web UI on {server.url}")
     if root:
         print(f"  serving built UI from {root}")
     else:
@@ -1877,7 +1877,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_desktop)
 
     # webserver
-    p = sub.add_parser("webserver", help="serve the DME Innovation MED17 Flasher web UI + API")
+    p = sub.add_parser("webserver", help="serve the DME Innovation Flasher web UI + API")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8090)
     p.add_argument("--profile", help="ECU profile (defaults to the C63 demo profile)")
