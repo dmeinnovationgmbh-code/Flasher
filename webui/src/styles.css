@@ -1,0 +1,80 @@
+/* Global styles - a 1:1 port of the design handoff's <style> block. */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #F5F5F7;
+  color: #1D1D1F;
+  font-family: 'Titillium Web', -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+
+a { color: #E86E00; text-decoration: none; }
+a:hover { color: #FF7A00; }
+
+button:focus-visible { outline: 2px solid #FF7A00; outline-offset: 2px; border-radius: 8px; }
+
+/* --- form controls: unify the native browser widgets with the design --- */
+input, select, textarea { transition: border-color .15s, box-shadow .15s; }
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: none;
+  border-color: #FF7A00 !important;
+  box-shadow: 0 0 0 3px rgba(255, 122, 0, .16);
+}
+input[type="checkbox"] { accent-color: #FF7A00; width: 15px; height: 15px; cursor: pointer; }
+
+/* one custom chevron so every <select> matches, regardless of OS/browser */
+select {
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%236E6E73' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 34px !important;
+}
+
+/* styled firmware drop-zone (replaces the raw file input) */
+.filedrop {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; border: 1.5px dashed rgba(0, 0, 0, .18); border-radius: 10px;
+  background: #FBFAF8; cursor: pointer; transition: border-color .15s, background .15s;
+}
+.filedrop:hover { border-color: #FF7A00; background: #FFF7F0; }
+.filedrop.drag { border-color: #FF7A00; background: #FFF1E4; }
+.filedrop input { display: none; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #D1D1D6; border-radius: 4px; }
+
+@keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .3 } }
+@keyframes scan { 0% { transform: translateX(-100%) } 100% { transform: translateX(300%) } }
+@keyframes fadeSlide { from { opacity: 0; transform: translateX(-6px) } to { opacity: 1; transform: translateX(0) } }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+/* Hover/active states that the prototype expressed via style-hover/style-active. */
+.btn-secondary { transition: border-color .15s; }
+.btn-secondary:hover { border-color: rgba(0, 0, 0, .3); }
+
+.btn-primary { transition: background .15s, transform .15s; }
+.btn-primary:hover:not(:disabled) { background: #E86E00 !important; }
+.btn-primary:active:not(:disabled) { transform: scale(.97); }
+
+.btn-buy { transition: background .15s, transform .15s; }
+.btn-buy:active:not(:disabled) { transform: scale(.98); }
+
+.btn-flash-ecu { transition: opacity .15s, transform .15s; }
+.btn-flash-ecu:hover { opacity: .85; }
+.btn-flash-ecu:active { transform: scale(.98); }
+
+.btn-cancel { transition: background .15s; }
+.btn-cancel:hover:not(:disabled) { background: rgba(215, 0, 21, .08) !important; }
+
+.link-action { transition: color .15s; }
+.link-action:hover { color: #FF7A00; }

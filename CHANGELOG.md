@@ -1,0 +1,203 @@
+# Changelog
+
+All notable changes to the **DME Innovation Flasher** are documented here.
+The format follows [Keep a Changelog](https://keepachangelog.com/); this project
+uses [Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+### Added
+- **VW/Audi SA2 seed/key — the DLL-free VAG unlock.** SA2 is the real
+  Volkswagen-Group security-access mechanism: the ECU's flash container carries
+  a short bytecode (the "SA2 script") that a tiny stack machine runs over the
+  seed to produce the key. A new `sa2` algorithm implements that bytecode VM
+  (opcodes rotate/add/sub/xor/loop/branch), so with the SA2 script from the
+  flashdaten it computes the key for *any* seed — no vendor DLL. Proven against
+  the published known-answer vector (`seed 0x1A1B1C1D → key 0x6A37F02E`).
+  Usable as `seedkey --algorithm sa2 --param script=…`, as an ECU-profile
+  security algorithm, and as a new **"VW/Audi SA2-Skript"** seed/key source in
+  the app's expert flash. The opcode semantics are a clean re-implementation of
+  the MIT-licensed reference by bri3d (`github.com/bri3d/sa2_seed_key`).
+- **Recover the seed/key algorithm in the app.** The Sniffer accumulates the
+  seed/key pairs across every session (dedup by seed); a **"Algorithmus lösen"**
+  button runs the solver and, when it is unambiguous (≥2 different seeds, one
+  algorithm reproducing them all), **"Als Seed/Key übernehmen"** saves a store
+  and wires it straight into the expert flash — so a sniff-derived-profile flash
+  computes its own keys for fresh seeds. New service `solve_seedkey()` /
+  `save_seedkey_store()` and `POST /api/seedkey/solve`, `POST /api/seedkey/save`.
+- **Preflight now checks the MEDC17 internal checksums** of the image about to
+  be written (advisory, never blocking): a modified calibration flashed with
+  stale checksums won't boot, so the rehearsal warns if any region is invalid.
+  Offsets remain a documented template until pinned to a real dump — the check
+  says so rather than pretending certainty.
+- **The sniff → flash loop is now closed in the app.** A sniff derives an ECU
+  profile (CAN ids + memory map); a **"Für Expert-Flash verwenden"** button on
+  the result stages it as a `derived:sniff` profile and jumps to the Flashen
+  tab with it preselected. Until now the derived profile dead-ended at a YAML
+  download nothing in the UI could consume.
+- **Full-ECU backup before writing.** New `med17flasher backup` reads *every*
+  region in the profile's memory map into one `.bin` plus a manifest (per-region
+  address/size/offset/CRC32) — the way back from a bad write. In the app, the
+  expert-flash panel gained an **"ECU auslesen (Backup)"** step with one-click
+  download and a warning when a real write is armed without a backup. (A full
+  read typically needs a programming/extended session + Security Access, or
+  bench/boot mode.) New service `backup()` / `stage_derived_profile()` and
+  `POST /api/backup`, `GET /api/backup/download`, `POST /api/profile/import`.
+- **Sniffer tab in the app.** The passive-capture workflow is now a clickable
+  tab, not just a CLI command: pick the interface (Tactrix/J2534, SocketCAN, …),
+  hit start, and watch the UDS flow decode live (session, seed/key, download
+  addresses, transfer progress) while another tool flashes. When it ends, the
+  derived profile, the seed/key pairs and the memory map appear in the panel and
+  download as files. A **"Simulator"** interface sniffs a self-driven demo flash,
+  so the tool can be shown end-to-end with no hardware. Backed by new
+  `start_sniff`/`stop_sniff`/`sniff_download` on the service and
+  `/api/sniff/*` endpoints, streaming over the existing SSE channel.
+- **`med17flasher sniff` — reverse-engineer another flasher's session.** Split
+  the OBD2 line so a Tactrix listens in parallel while an Autotuner (or any
+  other tool) does the real read/write, and this records the whole exchange
+  **completely passively — it injects no frames and never acts as a tester**, which is what makes it
+  safe to run alongside a live write. It decodes the UDS flow live (session,
+  the seed and key of each Security Access — paired automatically —, each
+  RequestDownload address/size, transfer progress, erase/checkMemory, ECUReset)
+  so you can see it is really capturing, then reassembles the full recording and
+  emits a derived **ECU profile** (CAN ids, security level, routine ids, memory
+  map) and the **seed/key pairs**. One session lets you replay the write; a few
+  (different seeds) feed `seedkey-solve` to recover the key algorithm. This is
+  the €0 alternative to buying a MED17.7.5 protocol package. New
+  `LiveUdsTracker` in `core/trace.py` (streaming ISO-TP reassembly + UDS decode)
+  with its own tests. See [`docs/SNIFF.md`](docs/SNIFF.md).
+- **The Windows installer now installs the Tactrix / J2534 driver for you.**
+  Drop the official Tactrix driver installer into `packaging/drivers/` before
+  building; the app installer bundles it and runs it silently after copying the
+  app, so the Openport 2.0 works right after setup with no separate download.
+  Presence is detected at build time, so a build without a driver committed is
+  unaffected; a checkbox (ticked by default) lets the user skip it, and a
+  `_silent_args.txt` override handles non-NSIS installers. See
+  `packaging/drivers/README.txt`.
+- **Preflight / dry run — rehearse a flash without writing anything.** Everything
+  up to the point of no return runs for real: the bus opens, the ECU answers,
+  the firmware is checked against the profile (including documented first/last
+  byte markers, e.g. a med1775 calibration must start 0x60 and end 0xDE), the
+  programming session is entered and Security Access actually completes — then
+  it stops, having erased nothing. This turns "the profile and seed/key are
+  probably right" into a verified fact at zero risk: a key that would fail after
+  the erase (bricking the ECU) fails here instead, on an untouched ECU.
+  - In the app: a **"Probelauf (nichts schreiben)"** button; a real hardware
+    write is now blocked until a rehearsal for that exact config has passed.
+  - In the CLI / shipped .exe: `flash --dry-run` now runs the live rehearsal
+    (add `--no-unlock` to skip Security Access) and exits non-zero with
+    "DO NOT FLASH" if a blocking check fails.
+  - `MemoryRegion` gained `expect_first_byte` / `expect_last_byte`; `Flasher`
+    gained `preflight()` returning a `PreflightReport`.
+- **J2534 PassThru CAN backend** — support for the interfaces professional
+  flashing actually uses (**Tactrix Openport 2.0**, Mongoose, VCX, …). Until now
+  the only real transports were SocketCAN and whatever `python-can` covers, and
+  `python-can` does not speak J2534, so a Tactrix could not reach the bus at
+  all. Includes Windows registry discovery (both 32- and 64-bit views), raw-CAN
+  channel setup with the mandatory pass-all filter, transmit-echo suppression,
+  batched reads, and interface/battery-voltage readout. See
+  [`docs/J2534.md`](docs/J2534.md).
+- **32-bit J2534 bridge** — vendor PassThru DLLs are 32-bit (`op20pt32.dll`) and
+  cannot be loaded by the 64-bit desktop build. `open_j2534()` now detects that
+  loader error and transparently runs the driver in a 32-bit helper process,
+  relaying frames over a line-JSON pipe.
+- `med17flasher j2534` — pre-flight check: opens the interface, prints
+  firmware/DLL/API versions and **battery voltage** (a brown-out mid-erase
+  bricks a MED17), and `--listen N` counts live bus traffic to tell a wiring
+  problem from an ECU problem. `med17flasher backends` now lists installed
+  PassThru interfaces by name.
+- The app's transport dropdown lists installed J2534 interfaces by their real
+  name; when none is installed the entry stays visible but disabled.
+
+- **Firmware vom Server laden** — the app can now pull images straight from a
+  running `med17flasher fileserver` (URL + token in the Flashen tab, catalogue
+  listing, one click to stage a file). Previously the file server existed but
+  was not reachable from the app at all, so firmware had to be copied to each
+  workstation by hand. Server-supplied images go through exactly the same
+  parsing and validation as an upload.
+- **A 32-bit vendor seed/key DLL now works from the 64-bit app.** `open_seedkey_dll()`
+  loads in-process and falls back to the 32-bit helper on exactly the loader
+  error, mirroring `open_j2534()`; the UI's "Vendor-DLL" source uses it and a
+  "force the helper" option was added. Until now picking a DLL in the app was
+  guaranteed to fail with WinError 193 — the bridge existed only in the CLI.
+- New [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md): everything that has to be
+  supplied from outside (interface, seed/key, firmware server, profile) and the
+  write-free order to bring a car up for the first time.
+
+### Changed
+- The 32-bit helper-process machinery (interpreter discovery, spawning, the
+  line-JSON exchange) moved into `core/procbridge.py` and is now shared by the
+  seed/key and J2534 bridges instead of being duplicated. `SeedKeyBridge._request`
+  is now the public `request()`.
+- The frozen build ships a plain-source copy of the package (`bridge_src/`) so
+  the 32-bit helper can import it — previously the bridges only worked from a
+  source checkout, never from an installed desktop build.
+
+### Testing
+- `tests/test_j2534.py` compiles a **mock PassThru driver in C** and exercises
+  the real ctypes layer against it (struct layout, big-endian id encoding, echo
+  suppression, filters, batching, teardown, the bridge), finishing with a
+  **complete UDS flash** — security access, erase, transfer, CRC verify —
+  carried through the J2534 backend into the ECU simulator.
+
+## [1.0.0] - 2026-08-19
+
+First complete release. **Everything is verified against the built-in simulator;
+nothing has been validated on a real ECU yet** — read
+[`docs/SAFETY.md`](docs/SAFETY.md) before writing to hardware.
+
+### Desktop app
+- Single standalone executable for **Windows, macOS and Linux** — no Python or
+  Node needed. Opens as a **native window** (pywebview) on Windows/macOS; falls
+  back to the browser on Linux.
+- Windows **Inno Setup installer** with Start-menu and desktop shortcuts.
+- Branded **DME Innovation Flasher**, with the DME wordmark as the app icon.
+- Robust startup: a missing/broken bundled profile falls back to a built-in one,
+  a startup failure shows a native error dialog + writes `med17flasher.log`, and
+  CI runs the frozen binary with `--selftest` so a build that crashes can't ship.
+
+### Web UI (four tabs, all driven by the real engine)
+- **Flashen** — expert real-flash: choose an ECU profile (incl. the real
+  `med1775` production flow), a transport (simulator or SocketCAN/PCAN/SLCAN/
+  Vector/Kvaser), upload your own firmware (`.bin`/`.hex`/`.s19`), pick the
+  seed/key source, and watch live progress + log. Writing to real hardware is
+  gated behind an explicit opt-in.
+- **Messen** — live XCP values with per-signal tiles and charts, polling or DAQ
+  streaming, CSV export.
+- **Diagnose** — read-only ECU scan (sessions, identification DIDs, seed levels),
+  memory read with hex dump, MEDC17 checksum verify/correct. Identification read
+  from the ECU replaces the placeholder vehicle data.
+- **OTS-Maps** — the map-purchase showcase (simulated; no real payment/files).
+
+### Engine and tooling
+- **UDS** (ISO 14229) client over **ISO-TP** (ISO 15765-2) with `responsePending`
+  (0x78) handling; full flash sequence with progress + abort.
+- **Seed/Key** — algorithm framework + reference algorithms, JSON catalogue, a
+  solver that recovers the algorithm from captured `(seed, key)` pairs, an
+  HTTP/TCP server, J2534 **DLL/EXE** backends, and a **32-bit bridge** so a
+  64-bit build can use a 32-bit vendor DLL.
+- **XCP** (ASAM MCD-1) master over CAN — memory read, full DAQ command set,
+  polling + DAQ measurement, CSV logging, and a virtual slave for tests.
+- **A2L** (ASAP2) parser → XCP signal specs.
+- **MEDC17/EDC17 checksums** — verify + correct (CRC32 via a GF(2) solver,
+  ADD32/ADD16), read-only CVN.
+- Firmware **file server**, `convert`/`inflate`/`extract-calibration`, CAN trace
+  and firmware analysis, and a **virtual MED17.7.5 simulator**.
+- CLI (`med17flasher …`) covering all of the above.
+
+### Quality
+- **222 tests**, `ruff` lint in CI, builds on Python 3.9–3.12, and desktop builds
+  for all three OSes with a post-build binary selftest.
+
+### Known limitations
+- No real-hardware validation; bundled profiles are a documented template.
+- The `med1775` seed/key is a placeholder — supply the real key via the vendor
+  DLL, the bridge, or a seed/key server.
+- The native window is unverified on Windows/macOS (built in CI, run only on
+  Linux which uses the browser fallback).
+- Builds are **not code-signed** — Windows SmartScreen warns on first run.
+- No `.cff` container parser yet, and MEDC17 checksum offsets are not pinned to a
+  specific ECU (both need a real sample to finish).
+
+[Unreleased]: https://github.com/dmeinnovationgmbh-code/Flasher/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/dmeinnovationgmbh-code/Flasher/releases/tag/v1.0.0

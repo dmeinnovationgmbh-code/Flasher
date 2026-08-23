@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+/build/
+/dist/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Project runtime data
+firmware-repo/
+*.log
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Design scratch (canvas-design deliverables; sent to the user, not product source)
+.design/

@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "med17flasher"
+version = "1.0.0"
+description = "DME Innovation Flasher: desktop flasher for the Bosch MED17.7.5 ECU (UDS/ISO-TP over CAN) with seed/key, XCP measurement and firmware file server"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "DME Innovation GmbH" }]
+keywords = ["MED17", "ECU", "flasher", "UDS", "ISO-TP", "ISO14229", "ISO15765", "CAN", "seedkey", "automotive", "TriCore"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Topic :: Software Development :: Embedded Systems",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+]
+# The core has NO hard third-party dependencies. PyYAML is only needed to read
+# YAML ECU profiles (JSON works without it), and is listed as optional below.
+dependencies = []
+
+[project.optional-dependencies]
+yaml = ["PyYAML>=5.1"]
+can = ["python-can>=4.0"]
+serial = ["pyserial>=3.4"]
+dev = ["pytest>=7.0", "PyYAML>=5.1"]
+desktop = ["pywebview>=4.0"]
+build = ["pyinstaller>=6.0"]
+all = ["PyYAML>=5.1", "python-can>=4.0", "pyserial>=3.4"]
+
+[project.scripts]
+med17flasher = "med17flasher.cli:main"
+med17-flasher = "med17flasher.cli:main"
+
+[project.gui-scripts]
+med17flasher-gui = "med17flasher.gui.app:main"
+med17flasher-desktop = "med17flasher.desktop:main"
+
+[tool.setuptools.packages.find]
+include = ["med17flasher*"]
+
+[tool.setuptools.package-data]
+med17flasher = ["../config/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

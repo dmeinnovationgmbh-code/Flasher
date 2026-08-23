@@ -1,0 +1,127 @@
+name: Build desktop app
+
+on:
+  push:
+    tags: ["v*"]
+    branches: ["claude/**"]   # also build downloadable artifacts on the dev branch
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: med17flasher-desktop-linux
+          - os: windows-latest
+            asset: med17flasher-desktop-windows.exe
+          - os: macos-latest
+            asset: med17flasher-desktop-macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - name: Build web UI
+        working-directory: webui
+        run: npm ci && npm run build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build deps
+        # Install PyYAML too so the bundled *.yaml ECU profiles load in the
+        # frozen app (the desktop app reads config/med17_7_5_c63.yaml at start).
+        run: python -m pip install --upgrade pip pyinstaller && pip install -e ".[yaml]"
+
+      # Native-window backend (pywebview) so the app opens as a real desktop
+      # window instead of a browser tab. Windows uses the WebView2 runtime via
+      # pythonnet; macOS uses the built-in WKWebView. Linux keeps the browser
+      # fallback (console build), so pywebview is not needed there.
+      - name: Install native-window deps (Windows)
+        if: runner.os == 'Windows'
+        run: pip install "pywebview>=4.4" pythonnet
+      - name: Install native-window deps (macOS)
+        if: runner.os == 'macOS'
+        run: pip install "pywebview>=4.4"
+
+      - name: Build desktop binary
+        run: pyinstaller --clean --noconfirm packaging/med17flasher.spec
+
+      # Actually RUN the frozen binary. Building alone never catches a startup
+      # crash (that is how the "bundled YAML but no PyYAML" crash shipped green);
+      # --selftest boots the server, fetches the bundled UI + API, and exits 0/1.
+      - name: Selftest the built binary (unix)
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x dist/med17flasher-desktop
+          ./dist/med17flasher-desktop --selftest
+      - name: Selftest the built binary (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # The Windows build is windowed (no console), so PowerShell would not
+          # wait for it or capture its exit code — Start-Process -Wait does both.
+          $p = Start-Process -FilePath "dist/med17flasher-desktop.exe" `
+                 -ArgumentList "--selftest" -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "desktop binary selftest failed (exit $($p.ExitCode))" }
+          Write-Host "selftest exit code: $($p.ExitCode)"
+
+      - name: Rename artifact (unix)
+        if: runner.os != 'Windows'
+        run: mv dist/med17flasher-desktop "dist/${{ matrix.asset }}"
+      - name: Rename artifact (windows)
+        if: runner.os == 'Windows'
+        run: mv dist/med17flasher-desktop.exe "dist/${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+
+      # Windows: also wrap the .exe in a classic Inno Setup installer with
+      # Start-menu + desktop shortcuts, so users can "install" it the usual way.
+      - name: Build Windows installer (Inno Setup)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # PyInstaller wrote dist/med17flasher-desktop.exe -> put it back under
+          # the name the .iss expects, then compile the installer.
+          Copy-Item "dist/${{ matrix.asset }}" "dist/med17flasher-desktop.exe" -Force
+          $ver = "${{ github.ref_name }}" -replace '^v',''
+          if ([string]::IsNullOrWhiteSpace($ver) -or $ver -notmatch '^\d') { $ver = "1.0.0" }
+          choco install innosetup --no-progress -y
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found at $iscc" }
+          & $iscc "/DAppVersion=$ver" packaging\windows_installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+          if (-not (Test-Path "dist/installer/med17flasher-setup.exe")) {
+            throw "installer was not produced at dist/installer/med17flasher-setup.exe"
+          }
+      - name: Upload Windows installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: med17flasher-setup-windows
+          path: dist/installer/med17flasher-setup.exe
+
+      - name: Attach binary to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.asset }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Attach Windows installer to release
+        if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/installer/med17flasher-setup.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

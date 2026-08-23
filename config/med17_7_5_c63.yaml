@@ -1,0 +1,50 @@
+# MED17.7.5 profile matching the "MED17 Flash Tool" web UI demo vehicle:
+# Mercedes-AMG C63 S (W205), engine M177, Bosch MED17.7.5 on Infineon TriCore
+# TC1767 with 2 MB program flash (0x80000000..0x801FFFFF).
+#
+# The low SBOOT sector (0x80000000..0x80008000, 32K) is PROTECTED and is not in
+# the flashable memory map below - the web UI shows it as a protected sector.
+#
+# Template values (verify against the real ECU before writing to hardware).
+name: MED17.7.5
+description: MED17.7.5 - Mercedes-AMG C63 S (W205 / M177) demo profile
+
+can:
+  tx_id: 0x7E0
+  rx_id: 0x7E8
+  functional_id: 0x7DF
+  padding_byte: 0x55
+
+timing:
+  p2: 1.0
+  p2_star: 5.0
+  tester_present_period: 2.0
+
+security:
+  request_seed_level: 0x11
+  send_key_level: 0x12
+  algorithm: med17
+  params:
+    k: 0x1C5A36B7
+    rounds: 5
+    shift: 5
+
+routines:
+  erase_memory: 0xFF00
+  check_programming_dependencies: 0xFF01
+  check_memory: 0x0202
+  erase_argument: address_size
+
+memory_map:
+  - name: CBOOT
+    start: 0x80008000
+    size:  0x00030000    # 192K
+    checksum: crc32
+  - name: ASW
+    start: 0x80038000
+    size:  0x00150000    # 1.3125M
+    checksum: crc32
+  - name: CAL
+    start: 0x80188000
+    size:  0x00078000    # 480K
+    checksum: crc32

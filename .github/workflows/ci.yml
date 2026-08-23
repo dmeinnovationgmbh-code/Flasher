@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install (editable, with dev extras)
+        run: python -m pip install --upgrade pip && pip install -e ".[dev]"
+      - name: Byte-compile
+        run: python -m compileall -q med17flasher
+      - name: Run tests
+        run: pytest -q
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Pinned so a new ruff release cannot turn a green PR red on its own.
+      - name: Install ruff
+        run: python -m pip install --upgrade pip && pip install "ruff==0.15.8"
+      - name: Lint
+        run: ruff check med17flasher tests
+
+  webui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - name: Install web UI deps
+        working-directory: webui
+        run: npm ci
+      - name: Build web UI
+        working-directory: webui
+        run: npm run build
